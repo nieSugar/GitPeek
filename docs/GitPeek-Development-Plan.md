@@ -130,14 +130,16 @@
 
 优先级为 P1，仍属于 v0.1.0 的交付范围。
 
-- [ ] 根据当前仓库的 Staged 文件生成候选，无需 AI。
-- [ ] 至少提供 `3` 个候选，支持 `feat`、`fix`、`refactor`、`perf`、`docs`、`test`、`style`、`chore`。
-- [ ] 支持 Conventional Commits 开关和默认类型配置。
-- [ ] 使用原生 QuickPick 选择候选。
-- [ ] 将选中内容写入对应仓库的 SCM Commit 输入框。
-- [ ] 处理无 Staged 文件、内置 Git 扩展不可用及已有提交草稿的情况，避免静默覆盖草稿。
+- [x] 根据当前仓库的 Staged 文件生成候选，无需 AI。
+- [x] 至少提供 `3` 个候选，支持 `feat`、`fix`、`refactor`、`perf`、`docs`、`test`、`style`、`chore`。
+- [x] 支持 Conventional Commits 开关和默认类型配置。
+- [x] 使用原生 QuickPick 选择候选。
+- [x] 将选中内容写入对应仓库的 SCM Commit 输入框。
+- [x] 处理无 Staged 文件、内置 Git 扩展不可用及已有提交草稿的情况，避免静默覆盖草稿。
 
 **验收条件**：在真实 VS Code 中验证 SCM 写入；多仓库场景必须写到用户操作的仓库。
+
+**执行记录**：`node tests/smartCommit.test.mjs` 验证候选与多仓库 root 匹配，`npm run check`、`npm run build` 通过；真实 VS Code SCM 写入待阶段 9 验证。
 
 ## 阶段 9：联调、验收与 v0.1.0 打包
 

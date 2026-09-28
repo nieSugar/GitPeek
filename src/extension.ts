@@ -9,6 +9,7 @@ import { registerCommitFeatures } from './features/commitDetail';
 import { registerBranchCompare } from './features/branchCompare';
 import { registerSelectionOrigins } from './features/selectionOrigins';
 import { registerReviewChanges } from './features/reviewChanges';
+import { generateCommitMessage } from './features/smartCommit';
 
 type GitRepository = {
   rootUri: vscode.Uri;
@@ -58,6 +59,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     output.appendLine(`[${new Date().toISOString()}] Refresh requested`);
   });
   context.subscriptions.push(refresh);
+  context.subscriptions.push(vscode.commands.registerCommand('gitpeek.generateCommitMessage', async () => {
+    const uri = vscode.window.activeTextEditor?.document.uri;
+    const repo = (uri ? await repositories.forUri(uri) : undefined) ?? await repositories.pickRepository();
+    if (!repo) {
+      await vscode.window.showInformationMessage('GitPeek: Open a file in a Git repository or select a repository.');
+      return;
+    }
+    await generateCommitMessage(git, repo);
+  }));
   output.appendLine('GitPeek activated.');
   void inspectGitScm();
 }
