@@ -107,6 +107,13 @@
           "when": "resourceScheme == file",
           "group": "navigation@2"
         }
+      ],
+      "editor/context": [
+        {
+          "command": "gitpeek.selectionOrigins",
+          "when": "editorHasSelection && resourceScheme == file",
+          "group": "navigation@1"
+        }
       ]
     },
     "configuration": {

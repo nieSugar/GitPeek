@@ -7,6 +7,7 @@ import { registerHistory } from './features/history';
 import { registerSidebar } from './features/sidebar';
 import { registerCommitFeatures } from './features/commitDetail';
 import { registerBranchCompare } from './features/branchCompare';
+import { registerSelectionOrigins } from './features/selectionOrigins';
 
 type GitRepository = {
   rootUri: vscode.Uri;
@@ -34,6 +35,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const history = await registerHistory(context, git, repositories, commits.showCommit);
   const sidebar = registerSidebar(context, history);
   const branch = registerBranchCompare(context, git, repositories, commits.showCommit);
+  await registerSelectionOrigins(context, git, repositories, commits.showCommit);
   const updateBranchViews = () => {
     sidebar.setBranchChangesItems(branch.items);
     const summary = branch.summary;
