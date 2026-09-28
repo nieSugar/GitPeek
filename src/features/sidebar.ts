@@ -1,27 +1,26 @@
 import * as vscode from 'vscode';
 import type { HistoryFeature } from './history';
 
-type Section = 'repository' | 'changes' | 'branchChanges';
+type Section = 'repository' | 'branchChanges';
 
 export interface SidebarFeature {
   refresh(): void;
   setRepositoryItems(items: readonly vscode.TreeItem[]): void;
-  setChangesItems(items: readonly vscode.TreeItem[]): void;
   setBranchChangesItems(items: readonly vscode.TreeItem[]): void;
 }
 
-export function registerSidebar(
+export function registerSidebar<T>(
   context: vscode.ExtensionContext,
   history: HistoryFeature,
+  changes: vscode.TreeDataProvider<T>,
 ): SidebarFeature {
   const sections: Record<Section, PlaceholderProvider> = {
     repository: new PlaceholderProvider('Open a Git repository to view details.', 'No repository details.'),
-    changes: new PlaceholderProvider('Open a Git repository to view changes.', 'No changes to show.'),
     branchChanges: new PlaceholderProvider('Open a Git repository to compare branches.', 'No branch changes to show.'),
   };
   const views = [
     vscode.window.createTreeView('gitpeek.repository', { treeDataProvider: sections.repository }),
-    vscode.window.createTreeView('gitpeek.changes', { treeDataProvider: sections.changes }),
+    vscode.window.createTreeView('gitpeek.changes', { treeDataProvider: changes }),
     vscode.window.createTreeView('gitpeek.branchChanges', { treeDataProvider: sections.branchChanges }),
     vscode.window.createTreeView('gitpeek.fileHistory', { treeDataProvider: history.provider }),
   ];
@@ -33,7 +32,6 @@ export function registerSidebar(
       for (const provider of Object.values(sections)) provider.refresh();
     },
     setRepositoryItems: (items) => sections.repository.setItems(items),
-    setChangesItems: (items) => sections.changes.setItems(items),
     setBranchChangesItems: (items) => sections.branchChanges.setItems(items),
   };
 }

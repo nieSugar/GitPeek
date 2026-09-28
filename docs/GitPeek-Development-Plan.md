@@ -114,15 +114,17 @@
 
 ## 阶段 7：Review Changes
 
-- [ ] 分组展示 Staged、Unstaged、Untracked。
-- [ ] 展示文件状态、增删行和汇总信息。
-- [ ] 正确处理同一个文件同时存在暂存与未暂存改动。
-- [ ] 分别打开 `HEAD → index`、`index → 磁盘`、`空内容 → 新文件` 的 Diff。
-- [ ] 检查新增或修改内容中的 `console.log`、`debugger`、`TODO`、`FIXME`。
-- [ ] 对 `.env`、`*.pem` 等文件提供提醒，警告不阻止提交。
-- [ ] 添加 changed 状态栏入口，明确未保存内容不计入磁盘上的 Git 变更。
+- [x] 分组展示 Staged、Unstaged、Untracked。
+- [x] 展示文件状态、增删行和汇总信息。
+- [x] 正确处理同一个文件同时存在暂存与未暂存改动。
+- [x] 分别打开 `HEAD → index`、`index → 磁盘`、`空内容 → 新文件` 的 Diff。
+- [x] 检查新增或修改内容中的 `console.log`、`debugger`、`TODO`、`FIXME`。
+- [x] 对 `.env`、`*.pem` 等文件提供提醒，警告不阻止提交。
+- [x] 添加 changed 状态栏入口，明确未保存内容不计入磁盘上的 Git 变更。
 
 **验收条件**：三类变更都能准确查看；警告位置正确，不因删除旧代码产生误报。
+
+**执行记录**：真实临时仓库检查通过双区同文件、三类 Diff、嵌套 Untracked、警告行号、敏感文件提醒和磁盘内容更新；`npm run check`、`npm run build` 通过。原生 VS Code Tree/QuickPick 交互待阶段 9 验证。
 
 ## 阶段 8：Smart Commit Message
 

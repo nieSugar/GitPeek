@@ -8,6 +8,7 @@ import { registerSidebar } from './features/sidebar';
 import { registerCommitFeatures } from './features/commitDetail';
 import { registerBranchCompare } from './features/branchCompare';
 import { registerSelectionOrigins } from './features/selectionOrigins';
+import { registerReviewChanges } from './features/reviewChanges';
 
 type GitRepository = {
   rootUri: vscode.Uri;
@@ -33,7 +34,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const blame = new BlameController(git, repositories, commits);
   context.subscriptions.push(blame);
   const history = await registerHistory(context, git, repositories, commits.showCommit);
-  const sidebar = registerSidebar(context, history);
+  const review = await registerReviewChanges(context, git, repositories);
+  const sidebar = registerSidebar(context, history, review.sidebar);
   const branch = registerBranchCompare(context, git, repositories, commits.showCommit);
   await registerSelectionOrigins(context, git, repositories, commits.showCommit);
   const updateBranchViews = () => {
@@ -52,6 +54,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     blame.refresh();
     sidebar.refresh();
     void branch.refresh();
+    void review.refresh().catch(() => undefined);
     output.appendLine(`[${new Date().toISOString()}] Refresh requested`);
   });
   context.subscriptions.push(refresh);
