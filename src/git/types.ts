@@ -14,6 +14,7 @@ export interface CommitInfo {
 
 export interface BlameInfo {
   hash: string
+  filename?: string
   author: string
   authorEmail?: string
   authorTime: number

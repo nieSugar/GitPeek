@@ -79,6 +79,7 @@ async function main() {
     assert.equal(detail.files[0].deletions, 1)
     const blame = await service.blame(repoA, "目录 & 'quote'/改名.txt", 2)
     assert.equal(blame[0].summary, 'initial')
+    assert.equal(blame[0].filename, "目录 & 'quote'/空 格.txt")
 
     writeFileSync(join(first, '--特殊 & 文档.md'), 'pending\n', 'utf8')
     const dirty = await service.status(repoA)

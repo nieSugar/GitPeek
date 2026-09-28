@@ -87,9 +87,10 @@ export function parseBlame(output: string): BlameInfo[] {
       else if (key === 'author-mail') info.authorEmail = text.replace(/^<|>$/g, '')
       else if (key === 'author-time') info.authorTime = Number(text)
       else if (key === 'summary') info.summary = text
+      else if (key === 'filename') info.filename = text
     }
     if (lines[i]?.startsWith('\t')) i++
-    if (info.authorTime !== undefined) result.push({ hash: info.hash!, author: info.author ?? '', authorEmail: info.authorEmail, authorTime: info.authorTime, summary: info.summary ?? '', originalLine: info.originalLine!, currentLine: info.currentLine! })
+    if (info.authorTime !== undefined) result.push({ hash: info.hash!, filename: info.filename, author: info.author ?? '', authorEmail: info.authorEmail, authorTime: info.authorTime, summary: info.summary ?? '', originalLine: info.originalLine!, currentLine: info.currentLine! })
   }
   return result
 }

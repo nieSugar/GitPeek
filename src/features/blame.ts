@@ -136,8 +136,8 @@ export class BlameController implements vscode.Disposable {
         } catch {
           if (!isCurrent()) return;
           try {
-            const tracked = await this.git.run(repo, ['ls-files', '--cached', '-z', '--', file]);
-            if (!tracked && isCurrent()) this.render(editor, line, '你 · 未提交的更改');
+            const committed = await this.git.run(repo, ['ls-tree', '-z', '--name-only', 'HEAD', '--', `:(literal)${file}`]);
+            if (!committed && isCurrent()) this.render(editor, line, '你 · 未提交的更改');
           } catch { /* Automatic blame errors remain silent. */ }
           return;
         }
@@ -161,7 +161,7 @@ export class BlameController implements vscode.Disposable {
       const link = (command: string, label: string, args: unknown[]) => `[${label}](command:${command}?${encodeURIComponent(JSON.stringify(args))})`;
       const links = this.actions ? [
         link(commitCommand, '查看提交', [repo, blame.hash]),
-        link(diffCommand, '查看差异', [repo, blame.hash, file]),
+        link(diffCommand, '查看差异', [repo, blame.hash, blame.filename ?? file]),
       ] : [];
       hover.appendMarkdown([...links, link(copyCommand, '复制提交哈希', [blame.hash])].join(' · '));
       this.render(editor, line, `${blame.author} · ${when} · ${blame.summary}`, hover);

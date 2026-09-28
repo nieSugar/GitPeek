@@ -77,8 +77,16 @@ async function main() {
     handlers.change({ document });
     await until(() => rendered.at(-1)?.[0]?.renderOptions?.after?.contentText === 'GitPeek：大文件已停用当前行归属显示。');
     assert.equal(pending.length, 2, 'large file size must not query blame');
+    document.uri = { scheme: 'file', fsPath: join(process.cwd(), 'staged-new.ts'), toString: () => 'file:staged-new.ts' };
+    vscode.workspace.fs.stat = async () => ({ size: 100 });
+    const commands = [];
+    git.run = async (_repo, args) => { commands.push(args); return args[0] === 'ls-tree' ? '' : 'a'.repeat(40); };
+    git.blame = async () => { throw new Error('no such path in HEAD'); };
+    handlers.change({ document });
+    await until(() => rendered.at(-1)?.[0]?.renderOptions?.after?.contentText === '你 · 未提交的更改');
+    assert.ok(commands.some((args) => args[0] === 'ls-tree' && args.at(-1) === ':(literal)staged-new.ts'));
     controller.dispose();
-    console.log('Blame check passed (stale result discarded, dirty and large files guarded).');
+    console.log('Blame check passed (stale result, dirty/large files, staged new file).');
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }

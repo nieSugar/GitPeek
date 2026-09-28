@@ -34,7 +34,7 @@ export class GitService {
 
   async blame(repo: Repository, file: string, startLine: number, endLine = startLine): Promise<BlameInfo[]> {
     if (!Number.isInteger(startLine) || !Number.isInteger(endLine) || startLine < 1 || endLine < startLine) throw new RangeError('Invalid blame line range')
-    return parseBlame(await this.run(repo, ['blame', '--line-porcelain', '-L', `${startLine},${endLine}`, '--', file]))
+    return parseBlame(await this.run(repo, ['-c', 'core.quotePath=false', 'blame', '--line-porcelain', '-L', `${startLine},${endLine}`, '--', file]))
   }
 
   async history(repo: Repository, file: string, limit = 20): Promise<CommitInfo[]> {
