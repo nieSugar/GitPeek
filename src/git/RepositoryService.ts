@@ -36,7 +36,7 @@ export class RepositoryService {
     const unique = [...new Map(found.filter((repo): repo is Repository => !!repo).map((repo) => [repo.id, repo])).values()]
     if (unique.length === 1) return unique[0]
     if (!unique.length) return undefined
-    const selected = await vscode.window.showQuickPick(unique.map((repo) => ({ label: vscode.workspace.asRelativePath(vscode.Uri.file(repo.root), false), description: repo.root, repo })), { placeHolder: 'Select a Git repository' })
+    const selected = await vscode.window.showQuickPick(unique.map((repo) => ({ label: vscode.workspace.asRelativePath(vscode.Uri.file(repo.root), false), description: repo.root, repo })), { placeHolder: '选择一个 Git 仓库' })
     return selected?.repo
   }
 

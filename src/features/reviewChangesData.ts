@@ -63,7 +63,7 @@ export async function loadReviewSnapshot(git: GitService, repo: Repository): Pro
 export async function loadReviewDiff(git: GitService, repo: Repository, section: ReviewSection, filePath: string): Promise<ReviewDiff> {
   const snapshot = await loadReviewSnapshot(git, repo);
   const file = snapshot.groups.find((group) => group.section === section)?.files.find((entry) => entry.path === filePath || entry.oldPath === filePath);
-  if (!file) throw new Error(`This ${section} change no longer exists: ${filePath}`);
+  if (!file) throw new Error(`此${({ staged: '已暂存', unstaged: '未暂存', untracked: '未跟踪' } as const)[section]}更改已不存在：${filePath}`);
   const oldPath = file.oldPath ?? file.path;
   const stagedAddition = section === 'staged' && file.status === 'A';
   const deleted = file.status === 'D';
@@ -134,7 +134,7 @@ function parsePatchWarnings(patch: string): Map<string, string[]> {
     if (!file || !text.startsWith('+') || text.startsWith('+++')) continue;
     for (const warning of scanLine(text.slice(1))) {
       const entries = result.get(file) ?? new Set<string>();
-      entries.add(`${warning} (line ${line})`);
+      entries.add(`${warning}（第 ${line} 行）`);
       result.set(file, entries);
     }
     line++;
@@ -144,19 +144,19 @@ function parsePatchWarnings(patch: string): Map<string, string[]> {
 
 function pathWarnings(path: string): string[] {
   const name = path.split('/').pop()?.toLowerCase() ?? '';
-  return name === '.env' || name.startsWith('.env.') || name.endsWith('.pem') ? [`Sensitive file: ${name}`] : [];
+  return name === '.env' || name.startsWith('.env.') || name.endsWith('.pem') ? [`敏感文件：${name}`] : [];
 }
 
 function scanAddedLines(text: string): string[] {
-  return text.split(/\r?\n/).flatMap((line, index) => scanLine(line).map((warning) => `${warning} (line ${index + 1})`));
+  return text.split(/\r?\n/).flatMap((line, index) => scanLine(line).map((warning) => `${warning}（第 ${index + 1} 行）`));
 }
 
 function scanLine(line: string): string[] {
   const warnings: string[] = [];
-  if (/\bconsole\.log\s*\(/.test(line)) warnings.push('console.log');
-  if (/\bdebugger\b/.test(line)) warnings.push('debugger');
-  if (/\bTODO\b/i.test(line)) warnings.push('TODO');
-  if (/\bFIXME\b/i.test(line)) warnings.push('FIXME');
+  if (/\bconsole\.log\s*\(/.test(line)) warnings.push('发现 console.log 调用');
+  if (/\bdebugger\b/.test(line)) warnings.push('发现 debugger 语句');
+  if (/\bTODO\b/i.test(line)) warnings.push('待办标记：TODO');
+  if (/\bFIXME\b/i.test(line)) warnings.push('待修复标记：FIXME');
   return warnings;
 }
 
@@ -171,5 +171,5 @@ function joinPath(root: string, file: string): string {
 }
 
 function binaryLabel(path: string, side: string): string {
-  return `[Binary file ${side}: ${path}; binary contents are not rendered.]\n`;
+  return `[二进制文件（${({ 'working tree': '工作区', untracked: '未跟踪文件', HEAD: 'HEAD', index: '暂存区' } as Record<string, string>)[side] ?? side}）：${path}；不显示二进制内容。]\n`;
 }

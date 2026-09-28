@@ -31,7 +31,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     sidebar.setRepositoryItems(summary ? [
       new vscode.TreeItem(path.basename(summary.repo.root)),
       new vscode.TreeItem(summary.branch),
-      new vscode.TreeItem(`vs ${summary.base} · ↑${summary.ahead} ↓${summary.behind}`),
+      new vscode.TreeItem(`对比 ${summary.base} · ↑${summary.ahead} ↓${summary.behind}`),
     ] : []);
   };
   context.subscriptions.push(branch.onDidChange(updateBranchViews));
@@ -42,23 +42,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     sidebar.refresh();
     void branch.refresh();
     void review.refresh().catch(() => undefined);
-    output.appendLine(`[${new Date().toISOString()}] Refresh requested`);
+    output.appendLine(`[${new Date().toISOString()}] 已请求刷新`);
   });
   context.subscriptions.push(refresh);
   context.subscriptions.push(vscode.commands.registerCommand('gitpeek.generateCommitMessage', async () => {
     if (!vscode.workspace.getConfiguration('gitpeek').get<boolean>('enabled', true)) {
-      await vscode.window.showInformationMessage('GitPeek is disabled in settings.');
+      await vscode.window.showInformationMessage('GitPeek 已在设置中禁用。');
       return;
     }
     const uri = vscode.window.activeTextEditor?.document.uri;
     const repo = (uri ? await repositories.forUri(uri) : undefined) ?? await repositories.pickRepository();
     if (!repo) {
-      await vscode.window.showInformationMessage('GitPeek: Open a file in a Git repository or select a repository.');
+      await vscode.window.showInformationMessage('GitPeek：请打开 Git 仓库中的文件，或选择一个仓库。');
       return;
     }
     await generateCommitMessage(git, repo);
   }));
-  output.appendLine('GitPeek activated.');
+  output.appendLine('GitPeek 已启动。');
 }
 
 export function deactivate(): void {}

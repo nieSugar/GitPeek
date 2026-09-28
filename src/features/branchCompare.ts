@@ -40,7 +40,7 @@ export async function resolveBaseBranch(git: GitService, repo: Repository, confi
 
   if (configured !== 'auto') {
     if (await exists(configured)) return configured
-    throw new Error(`Configured base branch "${configured}" does not exist or has no commit.`)
+    throw new Error(`配置的基准分支“${configured}”不存在或没有提交。`)
   }
 
   try {
@@ -50,7 +50,7 @@ export async function resolveBaseBranch(git: GitService, repo: Repository, confi
   } catch { /* Fall through to the local branch names. */ }
 
   for (const candidate of FALLBACK_BASES) if (await exists(candidate)) return candidate
-  throw new Error('No base branch found. Set gitpeek.baseBranch to an existing branch.')
+  throw new Error('未找到基准分支。请将 gitpeek.baseBranch 设置为已有分支。')
 }
 
 export async function loadBranchCompare(git: GitService, repo: Repository, base: string): Promise<BranchCompareSummary> {
@@ -58,15 +58,15 @@ export async function loadBranchCompare(git: GitService, repo: Repository, base:
     git.status(repo),
     git.run(repo, ['rev-parse', '--verify', '--end-of-options', 'HEAD^{commit}']).then((value) => value.trim()),
   ])
-  if (!/^[0-9a-f]{40,64}$/i.test(head)) throw new Error('The current branch has no commit yet.')
+  if (!/^[0-9a-f]{40,64}$/i.test(head)) throw new Error('当前分支尚无提交。')
 
   let mergeBase: string
   try {
     mergeBase = (await git.run(repo, ['merge-base', base, head])).trim()
   } catch {
-    throw new Error(`Base "${base}" and the current branch have no common ancestor.`)
+    throw new Error(`基准分支“${base}”与当前分支没有共同祖先。`)
   }
-  if (!mergeBase) throw new Error(`Base "${base}" and the current branch have no common ancestor.`)
+  if (!mergeBase) throw new Error(`基准分支“${base}”与当前分支没有共同祖先。`)
 
   // GitService.compare uses base...HEAD for the file set and counts; that diff is merge-base(base, HEAD) → HEAD.
   const comparison = await git.compare(repo, base, head)
@@ -111,9 +111,9 @@ class BranchContentProvider implements vscode.TextDocumentContentProvider {
     if (cached !== undefined) return cached
     const ref = JSON.parse(uri.query) as ContentRef
     const repo = this.repos.get(`${ref.repoId}\0${ref.root}`)
-    if (!repo) throw new Error('Repository context is unavailable for this branch diff.')
+    if (!repo) throw new Error('此分支差异的仓库上下文不可用。')
     if (ref.empty) return ''
-    if (ref.binary) return `[Binary file: ${ref.file}]\n`
+    if (ref.binary) return `[二进制文件：${ref.file}]\n`
     return this.git.run(repo, ['show', `${ref.ref}:${ref.file}`])
   }
 }
@@ -135,8 +135,8 @@ export function registerBranchCompare(
   let watcherRequest = 0
   let repoWatchers: vscode.Disposable[] = []
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 90)
-  statusBar.text = '$(git-branch) GitPeek: Compare with Base'
-  statusBar.tooltip = 'GitPeek: Compare the current branch with its base'
+  statusBar.text = '$(git-branch) GitPeek：与基准分支比较'
+  statusBar.tooltip = 'GitPeek：比较当前分支与基准分支'
   statusBar.command = 'gitpeek.showBranchChanges'
   statusBar.hide()
 
@@ -190,9 +190,9 @@ export function registerBranchCompare(
   }
 
   const refresh = async (): Promise<void> => {
-    if (!enabled()) { clearState('GitPeek Branch Compare is disabled. Enable gitpeek.enabled to use it.'); return }
+    if (!enabled()) { clearState('GitPeek 分支比较已禁用。请启用 gitpeek.enabled 后使用。'); return }
     const repo = activeRepo
-    if (!repo) { statusBar.hide(); currentSummary = undefined; updateView('Open a Git file to compare its branch.'); return }
+    if (!repo) { statusBar.hide(); currentSummary = undefined; updateView('打开 Git 文件以比较其所在分支。'); return }
     const request = ++generation
     statusBar.show()
     try {
@@ -203,12 +203,12 @@ export function registerBranchCompare(
       currentSummary = summary
       content.register(repo)
       statusBar.text = `$(git-branch) ${summary.branch} ↑${summary.ahead} ↓${summary.behind}`
-      statusBar.tooltip = `${summary.base} · ${summary.files.length} changed · +${summary.additions} −${summary.deletions}`
+      statusBar.tooltip = `${summary.base} · ${summary.files.length} 个文件已更改 · +${summary.additions} −${summary.deletions}`
       updateView()
     } catch (error) {
       if (request !== generation) return
       currentSummary = undefined
-      statusBar.text = '$(git-branch) GitPeek: Compare with Base'
+      statusBar.text = '$(git-branch) GitPeek：与基准分支比较'
       statusBar.tooltip = errorMessage(error)
       updateView(errorMessage(error))
     }
@@ -217,7 +217,7 @@ export function registerBranchCompare(
   const openDiff = async (summary: BranchCompareSummary, file: FileChange): Promise<void> => {
     try {
       if (!enabled()) {
-        await vscode.window.showInformationMessage('GitPeek Branch Compare is disabled. Enable gitpeek.enabled to use it.')
+        await vscode.window.showInformationMessage('GitPeek 分支比较已禁用。请启用 gitpeek.enabled 后使用。')
         return
       }
       const request = generation
@@ -230,11 +230,11 @@ export function registerBranchCompare(
       const oldContent = oldEmpty ? '' : binary ? binaryLabel(oldPath, 'before') : await git.run(summary.repo, ['show', `${summary.mergeBase}:${oldPath}`])
       const newContent = newEmpty ? '' : binary ? binaryLabel(file.path, 'after') : await git.run(summary.repo, ['show', `${summary.head}:${file.path}`])
       if (!enabled()) {
-        await vscode.window.showInformationMessage('GitPeek Branch Compare is disabled. Enable gitpeek.enabled to use it.')
+        await vscode.window.showInformationMessage('GitPeek 分支比较已禁用。请启用 gitpeek.enabled 后使用。')
         return
       }
       if (request !== generation || currentSummary?.head !== summary.head) {
-        await vscode.window.showInformationMessage('GitPeek branch data changed. Run Compare with Base again.')
+        await vscode.window.showInformationMessage('GitPeek 分支数据已变化，请重新运行“与基准分支比较”。')
         return
       }
       const oldUri = content.uri(summary.repo, summary.mergeBase, oldPath, oldEmpty, binary)
@@ -244,25 +244,25 @@ export function registerBranchCompare(
       const title = `${file.oldPath ? `${file.oldPath} → ` : ''}${file.path} (${summary.base} → ${summary.branch})`
       await vscode.commands.executeCommand('vscode.diff', oldUri, newUri, title)
     } catch (error) {
-      await vscode.window.showErrorMessage(`GitPeek: Could not open branch diff: ${errorMessage(error)}`)
+      await vscode.window.showErrorMessage(`GitPeek：无法打开分支差异：${errorMessage(error)}`)
     }
   }
 
   const show = async (repo?: Repository): Promise<void> => {
     if (!enabled()) {
-      await vscode.window.showInformationMessage('GitPeek Branch Compare is disabled. Enable gitpeek.enabled to use it.')
+      await vscode.window.showInformationMessage('GitPeek 分支比较已禁用。请启用 gitpeek.enabled 后使用。')
       return
     }
     const editorRepo = vscode.window.activeTextEditor
       ? await repositories.forUri(vscode.window.activeTextEditor.document.uri)
       : undefined
     if (!enabled()) {
-      await vscode.window.showInformationMessage('GitPeek Branch Compare is disabled. Enable gitpeek.enabled to use it.')
+      await vscode.window.showInformationMessage('GitPeek 分支比较已禁用。请启用 gitpeek.enabled 后使用。')
       return
     }
     const selectedRepo = repo ?? editorRepo ?? await repositories.pickRepository()
     if (!selectedRepo) {
-      await vscode.window.showInformationMessage('GitPeek: Open a file in a Git repository or select a repository.')
+      await vscode.window.showInformationMessage('GitPeek：请打开 Git 仓库中的文件，或选择一个仓库。')
       return
     }
     activeRepo = selectedRepo
@@ -270,24 +270,24 @@ export function registerBranchCompare(
     await installWatchers(selectedRepo)
     await refresh()
     if (!enabled()) {
-      await vscode.window.showInformationMessage('GitPeek Branch Compare is disabled. Enable gitpeek.enabled to use it.')
+      await vscode.window.showInformationMessage('GitPeek 分支比较已禁用。请启用 gitpeek.enabled 后使用。')
       return
     }
     const summary = currentSummary
     if (!summary) {
-      await vscode.window.showErrorMessage(`GitPeek: ${currentItems[0]?.label ?? 'Branch comparison is unavailable.'}`)
+      await vscode.window.showErrorMessage(`GitPeek：${currentItems[0]?.label ?? '当前无法进行分支比较。'}`)
       return
     }
     const choices: Array<vscode.QuickPickItem & { commit?: string; file?: FileChange }> = [
-      { label: `$(git-branch) ${summary.branch} vs ${summary.base} · ↑${summary.ahead} ↓${summary.behind} · ${summary.files.length} files · +${summary.additions} −${summary.deletions}`, kind: vscode.QuickPickItemKind.Separator },
-      { label: 'Branch commits', kind: vscode.QuickPickItemKind.Separator },
-      ...summary.commits.map((commit) => ({ label: `${commit.shortHash} ${commit.subject}`, description: `${commit.author} · ${new Date(commit.date).toLocaleDateString()}`, commit: commit.hash })),
-      { label: 'Changed files · merge-base → HEAD', kind: vscode.QuickPickItemKind.Separator },
-      ...summary.files.map((file) => ({ label: `${statusLabel(file.status)} ${file.path}`, description: `+${file.additions ?? 0} −${file.deletions ?? 0}${file.oldPath ? ` · from ${file.oldPath}` : ''}`, file })),
+      { label: `$(git-branch) ${summary.branch} 对比 ${summary.base} · ↑${summary.ahead} ↓${summary.behind} · ${summary.files.length} 个文件 · +${summary.additions} −${summary.deletions}`, kind: vscode.QuickPickItemKind.Separator },
+      { label: '分支提交', kind: vscode.QuickPickItemKind.Separator },
+      ...summary.commits.map((commit) => ({ label: `${commit.shortHash} ${commit.subject}`, description: `${commit.author} · ${new Date(commit.date).toLocaleDateString('zh-CN')}`, commit: commit.hash })),
+      { label: '变更文件 · 基准提交 → HEAD', kind: vscode.QuickPickItemKind.Separator },
+      ...summary.files.map((file) => ({ label: `${statusLabel(file.status)} ${file.path}`, description: `+${file.additions ?? 0} −${file.deletions ?? 0}${file.oldPath ? ` · 来源于 ${file.oldPath}` : ''}`, file })),
     ]
-    const selected = await vscode.window.showQuickPick(choices, { title: `${summary.branch} vs ${summary.base}`, matchOnDescription: true, placeHolder: 'Select a commit or file' })
+    const selected = await vscode.window.showQuickPick(choices, { title: `${summary.branch} 对比 ${summary.base}`, matchOnDescription: true, placeHolder: '选择一个提交或文件' })
     if (!enabled()) {
-      await vscode.window.showInformationMessage('GitPeek Branch Compare is disabled. Enable gitpeek.enabled to use it.')
+      await vscode.window.showInformationMessage('GitPeek 分支比较已禁用。请启用 gitpeek.enabled 后使用。')
       return
     }
     if (selected?.commit) await showCommit(summary.repo, selected.commit)
@@ -299,14 +299,14 @@ export function registerBranchCompare(
       editorGeneration++
       activeRepo = undefined
       clearWatchers()
-      clearState('GitPeek Branch Compare is disabled. Enable gitpeek.enabled to use it.')
+      clearState('GitPeek 分支比较已禁用。请启用 gitpeek.enabled 后使用。')
       return
     }
     if (!editor) {
       editorGeneration++
       activeRepo = undefined
       clearWatchers()
-      clearState('Open a Git file to compare its branch.')
+      clearState('打开 Git 文件以比较其所在分支。')
       return
     }
     const request = ++editorGeneration
@@ -315,13 +315,13 @@ export function registerBranchCompare(
     currentSummary = undefined
     clearWatchers()
     statusBar.hide()
-    updateView('Resolving the active Git repository.')
+    updateView('正在解析当前 Git 仓库。')
     const repo = await repositories.forUri(editor.document.uri)
     if (request !== editorGeneration || !enabled()) return
     activeRepo = repo
     if (!repo) {
       clearWatchers()
-      clearState('This file is not inside a Git repository.')
+      clearState('此文件不属于任何 Git 仓库。')
       return
     }
     statusBar.show()
@@ -336,7 +336,7 @@ export function registerBranchCompare(
         editorGeneration++
         activeRepo = undefined
         clearWatchers()
-        clearState('GitPeek Branch Compare is disabled. Enable gitpeek.enabled to use it.')
+        clearState('GitPeek 分支比较已禁用。请启用 gitpeek.enabled 后使用。')
       }
     } else if (event.affectsConfiguration('gitpeek.baseBranch') && enabled()) void refresh()
   })
@@ -359,17 +359,17 @@ export function registerBranchCompare(
 
   function createItems(summary: BranchCompareSummary): vscode.TreeItem[] {
     return [
-      treeItem(`${summary.branch} vs ${summary.base} · ↑${summary.ahead} ↓${summary.behind}`),
-      treeItem(`Commits (${summary.commits.length})`),
+      treeItem(`${summary.branch} 对比 ${summary.base} · ↑${summary.ahead} ↓${summary.behind}`),
+      treeItem(`提交 (${summary.commits.length})`),
       ...summary.commits.map((commit) => {
-        const item = treeItem(`${commit.shortHash} ${commit.subject}`, `${commit.author} · ${new Date(commit.date).toLocaleDateString()}`)
-        item.command = { command: 'gitpeek.internal.branch.showCommit', title: 'Show Commit', arguments: [summary.repo, commit.hash] }
+        const item = treeItem(`${commit.shortHash} ${commit.subject}`, `${commit.author} · ${new Date(commit.date).toLocaleDateString('zh-CN')}`)
+        item.command = { command: 'gitpeek.internal.branch.showCommit', title: '查看提交', arguments: [summary.repo, commit.hash] }
         return item
       }),
-      treeItem(`Files (${summary.files.length}) · +${summary.additions} −${summary.deletions}`),
+      treeItem(`文件 (${summary.files.length}) · +${summary.additions} −${summary.deletions}`),
       ...summary.files.map((file) => {
         const item = treeItem(`${statusLabel(file.status)} ${file.path}`, `+${file.additions ?? 0} −${file.deletions ?? 0}`)
-        item.command = { command: 'gitpeek.internal.branch.openDiff', title: 'Open Diff', arguments: [summary, file] }
+        item.command = { command: 'gitpeek.internal.branch.openDiff', title: '打开差异', arguments: [summary, file] }
         return item
       }),
     ]
@@ -387,7 +387,7 @@ function statusLabel(status: string): string {
 }
 
 function binaryLabel(path: string, side: string): string {
-  return `[Binary file ${side}: ${path}; content is not shown.]\n`
+  return `[二进制文件（${side === 'before' ? '比较前' : '比较后'}）：${path}；不显示文件内容。]\n`
 }
 
 function errorMessage(error: unknown): string {

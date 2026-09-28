@@ -68,7 +68,7 @@ async function main() {
     writeFileSync(join(repoRoot, 'new untracked.ts'), 'new one\nnew two\n', 'utf8')
     const untracked = await loadSelectionOrigins(service, repo, 'new untracked.ts', { startLine: 1, endLine: 2 })
     assert.equal(untracked.origins.length, 1)
-    assert.equal(untracked.origins[0].summary, 'Uncommitted changes')
+    assert.equal(untracked.origins[0].summary, '未提交的更改')
     assert.equal(untracked.origins[0].lineCount, 2)
     assert.equal(untracked.origins[0].hash, undefined, 'untracked origins cannot target a commit')
 

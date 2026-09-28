@@ -40,9 +40,9 @@ export function aggregateOrigins(blame: readonly BlameInfo[]): SelectionOrigin[]
     }
     groups.set(key, {
       ...(uncommitted ? {} : { hash: line.hash, shortHash: line.hash.slice(0, 7) }),
-      author: uncommitted ? 'You' : line.author,
+      author: uncommitted ? '你' : line.author,
       authorTime: line.authorTime,
-      summary: uncommitted ? 'Uncommitted changes' : line.summary,
+      summary: uncommitted ? '未提交的更改' : line.summary,
       lineCount: 1,
       uncommitted,
     });
@@ -96,7 +96,7 @@ function isMissingPathInHead(error: unknown): boolean {
 }
 
 function uncommittedOrigin(lineCount: number): SelectionOrigin {
-  return { author: 'You', authorTime: Math.floor(Date.now() / 1000), summary: 'Uncommitted changes', lineCount, uncommitted: true };
+  return { author: '你', authorTime: Math.floor(Date.now() / 1000), summary: '未提交的更改', lineCount, uncommitted: true };
 }
 
 export async function registerSelectionOrigins(
@@ -113,27 +113,27 @@ export async function registerSelectionOrigins(
   });
   const command = vscode.commands.registerCommand('gitpeek.selectionOrigins', async () => {
     if (!enabled()) {
-      void vscode.window.showInformationMessage('GitPeek: Enable the extension in settings to analyze selection origins.');
+      void vscode.window.showInformationMessage('GitPeek：请在设置中启用扩展后再分析选中代码来源。');
       return;
     }
     const request = ++generation;
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
-      void vscode.window.showInformationMessage('GitPeek: Select code in an open file first.');
+      void vscode.window.showInformationMessage('GitPeek：请先在已打开的文件中选中代码。');
       return;
     }
     const document = editor.document;
     if (document.isDirty) {
-      void vscode.window.showWarningMessage('GitPeek: Save the file before analyzing selection origins.');
+      void vscode.window.showWarningMessage('GitPeek：请先保存文件，再分析选中代码来源。');
       return;
     }
     if (document.uri.scheme !== 'file') {
-      void vscode.window.showInformationMessage('GitPeek: Selection origins are available for files inside a Git repository.');
+      void vscode.window.showInformationMessage('GitPeek：仅支持分析 Git 仓库中的文件。');
       return;
     }
     const selection = editor.selection;
     if (selection.isEmpty) {
-      void vscode.window.showInformationMessage('GitPeek: Select one or more lines first.');
+      void vscode.window.showInformationMessage('GitPeek：请先选中一行或多行代码。');
       return;
     }
 
@@ -143,7 +143,7 @@ export async function registerSelectionOrigins(
       && editor.selection.end.line === selection.end.line && editor.selection.end.character === selection.end.character;
     const repo = await repositories.forUri(document.uri);
     if (!repo || !isCurrent()) {
-      if (!repo) void vscode.window.showInformationMessage('GitPeek: This file is not inside a Git repository.');
+      if (!repo) void vscode.window.showInformationMessage('GitPeek：此文件不属于任何 Git 仓库。');
       return;
     }
     const range = toBlameLineRange(selection.start, selection.end);
@@ -152,24 +152,24 @@ export async function registerSelectionOrigins(
     try {
       result = await loadSelectionOrigins(git, repo, file, range);
     } catch (error) {
-      if (isCurrent()) void vscode.window.showErrorMessage(`GitPeek: Could not analyze selection origins: ${String(error)}`);
+      if (isCurrent()) void vscode.window.showErrorMessage(`GitPeek：无法分析选中代码来源：${String(error)}`);
       return;
     }
     if (!result || !isCurrent()) return;
 
     const { head, origins } = result;
     if (!origins.length) {
-      void vscode.window.showInformationMessage('GitPeek: No line origins were found for this selection.');
+      void vscode.window.showInformationMessage('GitPeek：未找到所选代码行的提交来源。');
       return;
     }
     const choices = origins.map((origin) => ({
       label: origin.uncommitted ? `$(circle-slash) ${origin.summary}` : `$(git-commit) ${origin.shortHash}  ${origin.summary}`,
-      description: `${origin.author}${origin.uncommitted ? '' : ` · ${new Date(origin.authorTime * 1000).toLocaleDateString()}`} · ${origin.lineCount} ${origin.lineCount === 1 ? 'line' : 'lines'}`,
+      description: `${origin.author}${origin.uncommitted ? '' : ` · ${new Date(origin.authorTime * 1000).toLocaleDateString('zh-CN')}`} · ${origin.lineCount} 行`,
       origin,
     }));
     const selected = await vscode.window.showQuickPick(choices, {
-      title: `Selection Origins · Lines ${range.startLine}–${range.endLine}`,
-      placeHolder: 'Choose a commit to inspect',
+      title: `代码来源 · 第 ${range.startLine}–${range.endLine} 行`,
+      placeHolder: '选择一个提交以查看详情',
     });
     if (isCurrent() && selected?.origin.hash && !selected.origin.uncommitted) {
       try {

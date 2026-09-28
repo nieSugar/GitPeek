@@ -22,7 +22,7 @@ export class GitService {
     } catch (cause) {
       const error = cause as NodeJS.ErrnoException & { stderr?: string; killed?: boolean; signal?: string }
       const detail = error.killed ? 'timed out' : error.code === 'ENOENT' ? 'git executable not found' : (error.stderr?.trim() || error.message)
-      throw new Error(`Git ${args[0] ?? 'command'} failed in "${root}": ${detail}`, { cause })
+      throw new Error(`Git 命令 ${args[0] ?? '未知命令'} 在“${root}”执行失败：${detail}`, { cause })
     } finally {
       try { this.log?.(`[GitPeek] git ${args[0] ?? 'command'} (${root}) ${Date.now() - startedAt}ms`) } catch { /* Logging must not affect Git operations. */ }
     }

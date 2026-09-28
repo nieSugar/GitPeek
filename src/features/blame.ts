@@ -86,7 +86,7 @@ export class BlameController implements vscode.Disposable {
     if (!config.get<boolean>('enabled', true) || !config.get<boolean>('blame.enabled', true)) return;
     if (editor.document.uri.scheme !== 'file') return;
     if (editor.document.isDirty) {
-      this.render(editor, editor.selection.active.line, 'Unsaved changes');
+      this.render(editor, editor.selection.active.line, '未保存的更改');
       return;
     }
 
@@ -105,7 +105,7 @@ export class BlameController implements vscode.Disposable {
     const isCurrent = () => generation === this.generation && vscode.window.activeTextEditor === editor
       && document.version === version && editor.selection.active.line === line && !document.isDirty;
     if (document.lineCount > 20_000) {
-      if (isCurrent()) this.render(editor, line, 'GitPeek blame disabled for large file.');
+      if (isCurrent()) this.render(editor, line, 'GitPeek：大文件已停用当前行归属显示。');
       return;
     }
 
@@ -113,7 +113,7 @@ export class BlameController implements vscode.Disposable {
       const stat = await vscode.workspace.fs.stat(document.uri);
       if (!isCurrent()) return;
       if (stat.size > 2 * 1024 * 1024) {
-        this.render(editor, line, 'GitPeek blame disabled for large file.');
+        this.render(editor, line, 'GitPeek：大文件已停用当前行归属显示。');
         return;
       }
       const repo = await this.repositories.forUri(document.uri);
@@ -123,7 +123,7 @@ export class BlameController implements vscode.Disposable {
       try {
         head = (await this.git.run(repo, ['rev-parse', '--verify', 'HEAD'])).trim();
       } catch {
-        if (isCurrent()) this.render(editor, line, 'You · uncommitted changes');
+        if (isCurrent()) this.render(editor, line, '你 · 未提交的更改');
         return;
       }
       if (!isCurrent()) return;
@@ -137,7 +137,7 @@ export class BlameController implements vscode.Disposable {
           if (!isCurrent()) return;
           try {
             const tracked = await this.git.run(repo, ['ls-files', '--cached', '-z', '--', file]);
-            if (!tracked && isCurrent()) this.render(editor, line, 'You · uncommitted changes');
+            if (!tracked && isCurrent()) this.render(editor, line, '你 · 未提交的更改');
           } catch { /* Automatic blame errors remain silent. */ }
           return;
         }
@@ -151,19 +151,19 @@ export class BlameController implements vscode.Disposable {
       }
       if (!blame || !isCurrent()) return;
       if (/^0+$/.test(blame.hash) || blame.author === 'Not Committed Yet') {
-        this.render(editor, line, 'You · uncommitted changes');
+        this.render(editor, line, '你 · 未提交的更改');
         return;
       }
       const when = relativeTime(blame.authorTime);
       const hover = new vscode.MarkdownString();
       hover.isTrusted = { enabledCommands: this.actions ? [commitCommand, diffCommand, copyCommand] : [copyCommand] };
-      hover.appendMarkdown(`**${escapeMarkdown(blame.author)}**  \n${new Date(blame.authorTime * 1000).toLocaleString()}  \n\n${escapeMarkdown(blame.summary)}  \n\n\`${blame.hash}\`  \n\n`);
+      hover.appendMarkdown(`**${escapeMarkdown(blame.author)}**  \n${new Date(blame.authorTime * 1000).toLocaleString('zh-CN')}  \n\n${escapeMarkdown(blame.summary)}  \n\n\`${blame.hash}\`  \n\n`);
       const link = (command: string, label: string, args: unknown[]) => `[${label}](command:${command}?${encodeURIComponent(JSON.stringify(args))})`;
       const links = this.actions ? [
-        link(commitCommand, 'View Commit', [repo, blame.hash]),
-        link(diffCommand, 'View Diff', [repo, blame.hash, file]),
+        link(commitCommand, '查看提交', [repo, blame.hash]),
+        link(diffCommand, '查看差异', [repo, blame.hash, file]),
       ] : [];
-      hover.appendMarkdown([...links, link(copyCommand, 'Copy Commit Hash', [blame.hash])].join(' · '));
+      hover.appendMarkdown([...links, link(copyCommand, '复制提交哈希', [blame.hash])].join(' · '));
       this.render(editor, line, `${blame.author} · ${when} · ${blame.summary}`, hover);
     } catch {
       // Automatic blame stays quiet for non-Git files, missing Git, and timeouts.
@@ -186,7 +186,7 @@ function relativeTime(seconds: number): string {
   const [value, unit] = elapsed < 3_600 ? [Math.max(1, Math.floor(elapsed / 60)), 'minute']
     : elapsed < 86_400 ? [Math.floor(elapsed / 3_600), 'hour']
       : [Math.floor(elapsed / 86_400), 'day'];
-  return new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' }).format(-value, unit as Intl.RelativeTimeFormatUnit);
+  return new Intl.RelativeTimeFormat('zh-CN', { numeric: 'auto' }).format(-value, unit as Intl.RelativeTimeFormatUnit);
 }
 
 function escapeMarkdown(value: string): string {

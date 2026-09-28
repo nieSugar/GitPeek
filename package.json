@@ -1,7 +1,7 @@
 {
   "name": "gitpeek",
   "displayName": "GitPeek",
-  "description": "A lightweight, context-first Git extension for VS Code.",
+  "description": "面向代码上下文的轻量级 VS Code Git 扩展。",
   "version": "0.1.0",
   "publisher": "gitpeek",
   "repository": {
@@ -39,35 +39,35 @@
     "commands": [
       {
         "command": "gitpeek.fileHistory",
-        "title": "GitPeek: File History"
+        "title": "GitPeek: 文件历史"
       },
       {
         "command": "gitpeek.blameCurrentLine",
-        "title": "GitPeek: Blame Current Line"
+        "title": "GitPeek: 查看当前行归属"
       },
       {
         "command": "gitpeek.selectionOrigins",
-        "title": "GitPeek: Selection Origins"
+        "title": "GitPeek: 查看选中代码来源"
       },
       {
         "command": "gitpeek.compareWithBase",
-        "title": "GitPeek: Compare with Base"
+        "title": "GitPeek: 与基准分支比较"
       },
       {
         "command": "gitpeek.showBranchChanges",
-        "title": "GitPeek: Show Branch Changes"
+        "title": "GitPeek: 查看分支变更"
       },
       {
         "command": "gitpeek.reviewChanges",
-        "title": "GitPeek: Review Changes"
+        "title": "GitPeek: 审查更改"
       },
       {
         "command": "gitpeek.generateCommitMessage",
-        "title": "GitPeek: Generate Commit Message"
+        "title": "GitPeek: 生成提交信息"
       },
       {
         "command": "gitpeek.refresh",
-        "title": "GitPeek: Refresh"
+        "title": "GitPeek: 刷新"
       }
     ],
     "viewsContainers": {
@@ -83,19 +83,19 @@
       "gitpeek": [
         {
           "id": "gitpeek.repository",
-          "name": "Repository"
+          "name": "仓库"
         },
         {
           "id": "gitpeek.changes",
-          "name": "Changes"
+          "name": "更改"
         },
         {
           "id": "gitpeek.branchChanges",
-          "name": "Branch Changes"
+          "name": "分支变更"
         },
         {
           "id": "gitpeek.fileHistory",
-          "name": "File History"
+          "name": "文件历史"
         }
       ]
     },
@@ -126,34 +126,34 @@
         "gitpeek.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Enable GitPeek."
+          "description": "启用 GitPeek。"
         },
         "gitpeek.blame.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Enable current-line blame."
+          "description": "启用当前行归属显示。"
         },
         "gitpeek.blame.delay": {
           "type": "number",
           "default": 300,
           "minimum": 0,
-          "description": "Delay before resolving current-line blame, in milliseconds."
+          "description": "解析当前行归属前的延迟，单位为毫秒。"
         },
         "gitpeek.history.limit": {
           "type": "number",
           "default": 20,
           "minimum": 1,
-          "description": "Number of file history entries to load initially."
+          "description": "初次加载的文件历史条数。"
         },
         "gitpeek.baseBranch": {
           "type": "string",
           "default": "auto",
-          "description": "Base branch used for comparisons, or auto."
+          "description": "用于比较的基准分支；auto 表示自动检测。"
         },
         "gitpeek.commit.conventional": {
           "type": "boolean",
           "default": true,
-          "description": "Use Conventional Commit format for suggestions."
+          "description": "建议的提交信息是否使用 Conventional Commits 格式。"
         },
         "gitpeek.commit.defaultType": {
           "type": "string",
@@ -168,7 +168,7 @@
             "style",
             "chore"
           ],
-          "description": "Default Conventional Commit type."
+          "description": "默认的 Conventional Commit 类型。"
         }
       }
     }

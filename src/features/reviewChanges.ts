@@ -35,8 +35,8 @@ class ReviewSidebar implements vscode.TreeDataProvider<ReviewNode> {
   getChildren(element?: ReviewNode): ReviewNode[] {
     if (!element) {
       if (this.error) return [{ kind: 'message', message: this.error }];
-      if (!this.snapshot) return [{ kind: 'message', message: 'Run GitPeek: Review Changes to load this view.' }];
-      if (!this.snapshot.fileCount) return [{ kind: 'message', message: 'No staged, unstaged, or untracked changes.' }];
+      if (!this.snapshot) return [{ kind: 'message', message: '运行“GitPeek：审查更改”以加载此视图。' }];
+      if (!this.snapshot.fileCount) return [{ kind: 'message', message: '没有已暂存、未暂存或未跟踪的更改。' }];
       return this.snapshot.groups.map((group) => ({ kind: 'section', snapshot: this.snapshot!, section: group.section }));
     }
     if (element.kind === 'message') return [];
@@ -59,10 +59,10 @@ class ReviewSidebar implements vscode.TreeDataProvider<ReviewNode> {
     const { file, repo } = element;
     const item = new vscode.TreeItem(`${statusTitle(file.status)} ${file.path}`, vscode.TreeItemCollapsibleState.None);
     item.id = `${repo.id}:${file.section}:${file.path}`;
-    item.description = file.binary ? 'Binary' : `+${file.additions ?? 0} −${file.deletions ?? 0}`;
+    item.description = file.binary ? '二进制文件' : `+${file.additions ?? 0} −${file.deletions ?? 0}`;
     item.tooltip = [file.oldPath ? `${file.oldPath} → ${file.path}` : file.path, ...file.warnings].join('\n');
     item.iconPath = new vscode.ThemeIcon(file.warnings.length ? 'warning' : file.binary ? 'file-binary' : 'diff');
-    item.command = { command: SHOW_DIFF, title: 'Open Review Diff', arguments: [repo, file.section, file.path] };
+    item.command = { command: SHOW_DIFF, title: '打开审查差异', arguments: [repo, file.section, file.path] };
     item.contextValue = `gitpeek.review.${file.section}`;
     return item;
   }
@@ -78,7 +78,7 @@ export async function registerReviewChanges(
   const sidebar = new ReviewSidebar();
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 20);
   statusBar.command = 'gitpeek.reviewChanges';
-  statusBar.tooltip = 'Review staged, unstaged, and untracked changes';
+  statusBar.tooltip = '审查已暂存、未暂存和未跟踪的更改';
   statusBar.hide();
   let currentRepo: Repository | undefined;
   let refreshGeneration = 0;
@@ -95,7 +95,7 @@ export async function registerReviewChanges(
   const clearDisabled = (): void => {
     refreshGeneration++;
     currentRepo = undefined;
-    sidebar.setSnapshot(undefined, 'Review Changes is disabled. Enable gitpeek.enabled to use it.');
+    sidebar.setSnapshot(undefined, '更改审查已禁用。请启用 gitpeek.enabled 后使用。');
     statusBar.hide();
   };
 
@@ -114,12 +114,12 @@ export async function registerReviewChanges(
       const snapshot = await loadReviewSnapshot(git, target);
       if (generation !== refreshGeneration || currentRepo?.id !== target.id) return sidebar.getData();
       sidebar.setSnapshot(snapshot);
-      statusBar.text = `$(git-compare) ${snapshot.fileCount} changed`;
+      statusBar.text = `$(git-compare) ${snapshot.fileCount} 个文件已更改`;
       statusBar.show();
       return snapshot;
     } catch (error) {
       if (generation === refreshGeneration && currentRepo?.id === target.id) {
-        sidebar.setSnapshot(undefined, `Unable to load changes: ${errorText(error)}`);
+        sidebar.setSnapshot(undefined, `无法加载更改：${errorText(error)}`);
         statusBar.hide();
       }
       throw error;
@@ -152,17 +152,17 @@ export async function registerReviewChanges(
   const show = async (repo?: Repository): Promise<void> => {
     try {
       if (!enabled()) {
-        await vscode.window.showInformationMessage('GitPeek Review Changes is disabled. Enable gitpeek.enabled to use it.');
+        await vscode.window.showInformationMessage('GitPeek 更改审查已禁用。请启用 gitpeek.enabled 后使用。');
         return;
       }
       const target = await resolveRepo(repo) ?? await repos.pickRepository();
       if (!target) {
-        await vscode.window.showInformationMessage('GitPeek: Open a Git repository to review changes.');
+        await vscode.window.showInformationMessage('GitPeek：请打开一个 Git 仓库以审查更改。');
         return;
       }
       const snapshot = await refresh(target);
       if (!enabled()) {
-        await vscode.window.showInformationMessage('GitPeek Review Changes is disabled. Enable gitpeek.enabled to use it.');
+        await vscode.window.showInformationMessage('GitPeek 更改审查已禁用。请启用 gitpeek.enabled 后使用。');
         return;
       }
       if (!snapshot) return;
@@ -172,42 +172,42 @@ export async function registerReviewChanges(
         for (const file of group.files) {
           items.push({
             label: `${statusTitle(file.status)} ${file.path}`,
-            description: `${file.binary ? 'Binary' : `+${file.additions ?? 0} −${file.deletions ?? 0}`}${file.warnings.length ? ` · ⚠ ${file.warnings.join(', ')}` : ''}`,
-            detail: file.oldPath ? `Renamed from ${file.oldPath}` : undefined,
+            description: `${file.binary ? '二进制文件' : `+${file.additions ?? 0} −${file.deletions ?? 0}`}${file.warnings.length ? ` · ⚠ ${file.warnings.join(', ')}` : ''}`,
+            detail: file.oldPath ? `重命名自 ${file.oldPath}` : undefined,
             file,
           });
         }
       }
       if (!snapshot.fileCount) {
-        await vscode.window.showInformationMessage('GitPeek: No staged, unstaged, or untracked changes.');
+        await vscode.window.showInformationMessage('GitPeek：没有已暂存、未暂存或未跟踪的更改。');
         return;
       }
       const selected = await vscode.window.showQuickPick(items, {
-        title: 'GitPeek: Review Changes',
-        placeHolder: `${snapshot.fileCount} changed files · +${snapshot.additions} −${snapshot.deletions}`,
+        title: 'GitPeek：审查更改',
+        placeHolder: `${snapshot.fileCount} 个文件已更改 · +${snapshot.additions} −${snapshot.deletions}`,
         matchOnDescription: true,
         matchOnDetail: true,
       });
       if (selected?.file) await showDiff(target, selected.file.section, selected.file.path);
     } catch (error) {
-      await vscode.window.showErrorMessage(`GitPeek: Could not review changes: ${errorText(error)}`);
+      await vscode.window.showErrorMessage(`GitPeek：无法审查更改：${errorText(error)}`);
     }
   };
 
   const showDiff = async (repo: Repository, section: ReviewSection, filePath: string): Promise<void> => {
     try {
       if (!enabled()) {
-        await vscode.window.showInformationMessage('GitPeek Review Changes is disabled. Enable gitpeek.enabled to use it.');
+        await vscode.window.showInformationMessage('GitPeek 更改审查已禁用。请启用 gitpeek.enabled 后使用。');
         return;
       }
       const generation = refreshGeneration;
       const diff = await loadReviewDiff(git, repo, section, filePath);
       if (!enabled()) {
-        await vscode.window.showInformationMessage('GitPeek Review Changes is disabled. Enable gitpeek.enabled to use it.');
+        await vscode.window.showInformationMessage('GitPeek 更改审查已禁用。请启用 gitpeek.enabled 后使用。');
         return;
       }
       if (generation !== refreshGeneration) {
-        await vscode.window.showInformationMessage('GitPeek changes were refreshed. Run Review Changes again.');
+        await vscode.window.showInformationMessage('GitPeek 更改已刷新，请重新运行“审查更改”。');
         return;
       }
       const revision = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -215,10 +215,10 @@ export async function registerReviewChanges(
       const newUri = reviewUri(repo, revision, section, diff.file.path, 'after');
       content.set(oldUri, diff.oldContent);
       content.set(newUri, diff.newContent);
-      const title = `${section[0].toUpperCase()}${section.slice(1)}: ${diff.file.oldPath ? `${diff.file.oldPath} → ` : ''}${diff.file.path}${diff.binary ? ' · binary' : ''}`;
+      const title = `${sectionLabel(section)}：${diff.file.oldPath ? `${diff.file.oldPath} → ` : ''}${diff.file.path}${diff.binary ? ' · 二进制文件' : ''}`;
       await vscode.commands.executeCommand('vscode.diff', oldUri, newUri, title);
     } catch (error) {
-      await vscode.window.showErrorMessage(`GitPeek: Could not open current diff: ${errorText(error)}`);
+      await vscode.window.showErrorMessage(`GitPeek：无法打开当前差异：${errorText(error)}`);
       await refresh(repo).catch(() => undefined);
     }
   };
@@ -266,19 +266,23 @@ class ReviewContentProvider implements vscode.TextDocumentContentProvider {
 
   provideTextDocumentContent(uri: vscode.Uri): string {
     const content = this.contents.get(uri.toString());
-    if (content === undefined) throw new Error('Review diff expired. Open Review Changes again to refresh it.');
+    if (content === undefined) throw new Error('审查差异已过期，请重新打开“审查更改”以刷新。');
     return content;
   }
 
   dispose(): void { this.change.dispose(); }
 }
 
+const SECTION_LABELS: Record<ReviewSection, string> = { staged: '已暂存', unstaged: '未暂存', untracked: '未跟踪' };
+
+function sectionLabel(section: ReviewSection): string { return SECTION_LABELS[section]; }
+
 function sectionTitle(section: ReviewSection, count: number): string {
-  return `${section[0].toUpperCase()}${section.slice(1)} (${count})`;
+  return `${sectionLabel(section)} (${count})`;
 }
 
 function statusTitle(status: string): string {
-  return ({ A: 'Added', M: 'Modified', D: 'Deleted', R: 'Renamed', C: 'Copied', T: 'Type changed' } as Record<string, string>)[status] ?? status;
+  return ({ A: '新增', M: '已修改', D: '已删除', R: '已重命名', C: '已复制', T: '类型已更改' } as Record<string, string>)[status] ?? status;
 }
 
 function errorText(error: unknown): string {

@@ -124,13 +124,13 @@ export async function registerHistory(
     getChildren: async () => {
       const uri = activeUri;
       if (!vscode.workspace.getConfiguration('gitpeek', uri).get<boolean>('enabled', true)) {
-        return [message(vscode, 'GitPeek is disabled in settings.')];
+        return [message(vscode, 'GitPeek 已在设置中禁用。')];
       }
-      if (!uri || uri.scheme !== 'file') return [message(vscode, 'Open a file to view its history.')];
+      if (!uri || uri.scheme !== 'file') return [message(vscode, '打开一个文件以查看其历史。')];
       const currentGeneration = generation;
       const repo = await repositories.forUri(uri);
       if (currentGeneration !== generation) return [];
-      if (!repo) return [message(vscode, 'This file is not inside a Git repository.')];
+      if (!repo) return [message(vscode, '此文件不属于任何 Git 仓库。')];
       await watchRepository(repo);
       if (currentGeneration !== generation) return [];
 
@@ -140,19 +140,19 @@ export async function registerHistory(
         if (currentGeneration !== generation || uri !== activeUri) return [];
         const rows: HistoryItem[] = [message(vscode, vscode.workspace.asRelativePath(uri, false))];
         rows.push(...page.commits.map((commit) => commitItem(vscode, repo, commit, !!showCommit)));
-        if (!page.commits.length) rows.push(message(vscode, 'No commits found for this file.'));
+        if (!page.commits.length) rows.push(message(vscode, '此文件没有提交记录。'));
         else if (page.hasMore) rows.push(moreItem(vscode));
         return rows;
       } catch (error) {
         if (currentGeneration !== generation) return [];
-        return [message(vscode, `Unable to load file history: ${String(error)}`)];
+        return [message(vscode, `无法加载文件历史：${String(error)}`)];
       }
     },
   };
 
   const show = async (uri: vscode.Uri): Promise<void> => {
     if (!vscode.workspace.getConfiguration('gitpeek', uri).get<boolean>('enabled', true)) {
-      await vscode.window.showInformationMessage('GitPeek: Enable the extension in settings to view file history.');
+      await vscode.window.showInformationMessage('GitPeek：请在设置中启用扩展后再查看文件历史。');
       return;
     }
     activeUri = uri;
@@ -199,11 +199,11 @@ export async function registerHistory(
     vscode.commands.registerCommand('gitpeek.fileHistory', async () => {
       const uri = vscode.window.activeTextEditor?.document.uri;
       if (!vscode.workspace.getConfiguration('gitpeek', uri).get<boolean>('enabled', true)) {
-        await vscode.window.showInformationMessage('GitPeek: Enable the extension in settings to view file history.');
+        await vscode.window.showInformationMessage('GitPeek：请在设置中启用扩展后再查看文件历史。');
         return;
       }
       if (!uri) {
-        void vscode.window.showInformationMessage('GitPeek: Open a file to view its history.');
+        void vscode.window.showInformationMessage('GitPeek：请先打开一个文件以查看其历史。');
         return;
       }
       await show(uri);
@@ -228,22 +228,22 @@ function message(vscode: typeof import('vscode'), label: string): HistoryItem {
 }
 
 function commitItem(vscode: typeof import('vscode'), repo: Repository, commit: CommitInfo, canOpen: boolean): HistoryItem {
-  const date = new Date(commit.date).toLocaleDateString();
+  const date = new Date(commit.date).toLocaleDateString('zh-CN');
   const item = new vscode.TreeItem(`${commit.subject}`, vscode.TreeItemCollapsibleState.None);
   item.description = `${commit.author} · ${date} · ${commit.shortHash}`;
   item.tooltip = `${commit.subject}\n${commit.author} · ${date}\n${commit.hash}`;
   item.iconPath = new vscode.ThemeIcon('git-commit');
   if (canOpen) item.command = {
     command: 'gitpeek.internal.fileHistory.showCommit',
-    title: 'Show Commit',
+    title: '查看提交',
     arguments: [repo, commit.hash],
   };
   return item;
 }
 
 function moreItem(vscode: typeof import('vscode')): HistoryItem {
-  const item = new vscode.TreeItem('Load More…', vscode.TreeItemCollapsibleState.None);
+  const item = new vscode.TreeItem('加载更多…', vscode.TreeItemCollapsibleState.None);
   item.iconPath = new vscode.ThemeIcon('ellipsis');
-  item.command = { command: 'gitpeek.internal.fileHistory.loadMore', title: 'Load More' };
+  item.command = { command: 'gitpeek.internal.fileHistory.loadMore', title: '加载更多' };
   return item;
 }

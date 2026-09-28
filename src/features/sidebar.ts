@@ -15,8 +15,8 @@ export function registerSidebar<T>(
   changes: vscode.TreeDataProvider<T>,
 ): SidebarFeature {
   const sections: Record<Section, PlaceholderProvider> = {
-    repository: new PlaceholderProvider('Open a Git repository to view details.', 'No repository details.'),
-    branchChanges: new PlaceholderProvider('Open a Git repository to compare branches.', 'No branch changes to show.'),
+    repository: new PlaceholderProvider('打开 Git 仓库以查看详细信息。', '暂无仓库信息。'),
+    branchChanges: new PlaceholderProvider('打开 Git 仓库以比较分支。', '暂无分支变更。'),
   };
   const views = [
     vscode.window.createTreeView('gitpeek.repository', { treeDataProvider: sections.repository }),

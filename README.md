@@ -1,59 +1,57 @@
 # GitPeek
 
-**GitPeek is a lightweight, context-first Git extension for VS Code.** Understand the code you are looking at without navigating complex Git interfaces. See who changed a line, inspect file history, understand branch changes, trace selected code to its commits, and review your work before committing.
+**GitPeek 是一款面向代码上下文的轻量级 VS Code Git 扩展。** 无需在复杂的 Git 界面间来回切换，即可查看当前代码行的修改者、文件历史、分支变更、选中代码的提交来源，并在提交前审查更改。
 
-GitPeek 是一个轻量、Context-first 的 VS Code Git 插件。不必切换到复杂的 Git 页面，也能查看当前代码的修改来源、文件历史、分支差异和提交前改动。
+## 功能
 
-## Features
+- **当前行归属**：查看光标所在代码行的作者、日期和提交摘要。
+- **文件历史**：浏览文件的近期提交，包含重命名历史，并支持加载更多。
+- **提交详情与差异**：查看提交修改的文件，并在 VS Code 中打开文本差异。二进制文件仅显示元数据，不会作为文本渲染。
+- **分支比较**：查看当前分支相对基准分支的领先/落后数量、提交、变更文件和差异。
+- **选中代码来源**：按提交归组选中行并统计行数。未提交的行会单独显示，不会打开提交历史。
+- **审查更改**：检查已暂存、未暂存和未跟踪的文件及行数，并提示 `console.log`、`debugger`、`TODO`、`FIXME`、`.env` 和 `*.pem` 等内容。
+- **智能生成提交信息**：根据已暂存文件的名称和状态生成候选信息，并可将所选内容填入当前仓库的 SCM 提交输入框。此功能不使用 AI，也不会检查完整差异来推断意图。
 
-- **Current Line Blame** — See the author, date, and commit summary for the line at the cursor.
-- **File History** — Browse a file's recent commits, including rename history, with Load More pagination.
-- **Commit Details and Diff** — Inspect changed files and open text diffs in VS Code. Binary files are represented by metadata; their contents are not rendered as text.
-- **Branch vs Base** — Review ahead/behind counts, branch commits, changed files, and diffs against a base branch.
-- **Selection Origins** — Group selected lines by commit and count their lines. Uncommitted lines appear separately and do not open commit history.
-- **Review Changes** — Review staged, unstaged, and untracked files, line counts, and reminders for items such as `console.log`, `debugger`, `TODO`, `FIXME`, `.env`, and `*.pem`.
-- **Smart Commit Message** — Generate commit message candidates from staged file names and statuses, then choose one for the repository's SCM input. It does not use AI or inspect the full diff to infer intent.
+GitPeek 侧栏包含“仓库”“更改”“分支变更”和“文件历史”视图。针对文件的命令会使用当前活动文件所属的仓库。智能提交通过仓库根目录匹配 VS Code 内置 Git SCM，因此支持多根工作区。
 
-The GitPeek sidebar contains Repository, Changes, Branch Changes, and File History views. File-specific commands use the repository containing the active file. Smart Commit matches the built-in Git SCM repository by root, which supports multi-root workspaces.
+## 命令
 
-## Commands
+打开命令面板（`Ctrl+Shift+P` / `Cmd+Shift+P`）运行：
 
-Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) to run:
-
-| Command | Purpose |
+| 命令 | 用途 |
 | --- | --- |
-| `GitPeek: File History` | Show history for the active file |
-| `GitPeek: Blame Current Line` | Refresh blame for the current line |
-| `GitPeek: Selection Origins` | Show commits behind the selected lines |
-| `GitPeek: Compare with Base` | Compare the current branch with its base |
-| `GitPeek: Show Branch Changes` | Review branch commits and changed files |
-| `GitPeek: Review Changes` | Inspect staged, unstaged, and untracked changes |
-| `GitPeek: Generate Commit Message` | Generate candidates from staged files |
-| `GitPeek: Refresh` | Refresh GitPeek views and cached data |
+| `GitPeek: 文件历史` | 查看当前文件的历史 |
+| `GitPeek: 查看当前行归属` | 刷新光标所在行的归属信息 |
+| `GitPeek: 查看选中代码来源` | 查看所选代码行对应的提交 |
+| `GitPeek: 与基准分支比较` | 比较当前分支与基准分支 |
+| `GitPeek: 查看分支变更` | 查看分支提交和变更文件 |
+| `GitPeek: 审查更改` | 检查已暂存、未暂存和未跟踪的更改 |
+| `GitPeek: 生成提交信息` | 根据已暂存文件生成候选提交信息 |
+| `GitPeek: 刷新` | 刷新 GitPeek 视图和缓存数据 |
 
-File History and Compare with Base are also available from the editor title bar. Selection Origins is available from the editor context menu when text is selected.
+“文件历史”和“与基准分支比较”也可从编辑器标题栏打开。选中文本后，可从编辑器上下文菜单打开“查看选中代码来源”。
 
-## Settings
+## 设置
 
-| Setting | Default | Description |
+| 设置 | 默认值 | 说明 |
 | --- | --- | --- |
-| `gitpeek.enabled` | `true` | Enable GitPeek features. |
-| `gitpeek.blame.enabled` | `true` | Enable current-line blame. |
-| `gitpeek.blame.delay` | `300` | Delay before resolving current-line blame, in milliseconds. |
-| `gitpeek.history.limit` | `20` | Initial number of file history entries. |
-| `gitpeek.baseBranch` | `"auto"` | Base branch for comparisons, or a branch name. |
-| `gitpeek.commit.conventional` | `true` | Format Smart Commit candidates as Conventional Commits. |
-| `gitpeek.commit.defaultType` | `"chore"` | Preferred type: `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `style`, or `chore`. |
+| `gitpeek.enabled` | `true` | 启用 GitPeek 功能。 |
+| `gitpeek.blame.enabled` | `true` | 启用当前行归属显示。 |
+| `gitpeek.blame.delay` | `300` | 解析当前行归属前的延迟，单位为毫秒。 |
+| `gitpeek.history.limit` | `20` | 初次加载的文件历史条数。 |
+| `gitpeek.baseBranch` | `auto` | 用于比较的基准分支，或指定分支名称。 |
+| `gitpeek.commit.conventional` | `true` | 将智能提交候选信息格式化为 Conventional Commits。 |
+| `gitpeek.commit.defaultType` | `chore` | 首选类型：`feat`、`fix`、`refactor`、`perf`、`docs`、`test`、`style` 或 `chore`。 |
 
-## Requirements
+## 环境要求
 
-- VS Code **1.96.0 or later**.
-- A system Git installation available on `PATH`.
-- The built-in VS Code Git extension enabled for SCM integration.
+- VS Code **1.96.0 或更高版本**。
+- 系统已安装 Git，且 Git 可通过 `PATH` 找到。
+- 已启用 VS Code 内置 Git 扩展，以集成 SCM。
 
-## Build and install a local VSIX
+## 构建并安装本地 VSIX
 
-From the repository root, install the development dependencies and build the package:
+在仓库根目录安装开发依赖并构建扩展：
 
 ```sh
 npm install
@@ -62,14 +60,14 @@ npm test
 npm run package
 ```
 
-Install the generated VSIX in VS Code:
+在 VS Code 中安装生成的 VSIX：
 
 ```sh
 code --install-extension gitpeek-0.1.0.vsix
 ```
 
-You can also use **Extensions: Install from VSIX...** in VS Code and select the generated file.
+也可以在 VS Code 中运行 **扩展：从 VSIX 安装...**，然后选择生成的文件。
 
-## Scope and limitations
+## 范围与限制
 
-GitPeek focuses on code context. Git Graph, pull request and GitHub integrations, AI chat, stash management, and interactive rebase are outside the v0.1.0 MVP. Smart Commit suggests wording from staged paths and statuses, so review the message before committing. Binary diffs show metadata rather than file contents.
+GitPeek 专注于代码上下文。Git Graph、Pull Request 和 GitHub 集成、AI 聊天、暂存管理及交互式 rebase 不属于 v0.1.0 MVP 范围。智能提交仅根据已暂存文件的路径和状态提供措辞建议，提交前请检查生成的信息。二进制差异仅显示元数据，不显示文件内容。

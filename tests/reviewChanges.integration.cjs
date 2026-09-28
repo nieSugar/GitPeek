@@ -49,12 +49,12 @@ async function main() {
     assert.deepEqual([staged.additions, staged.deletions], [2, 1]);
     assert.deepEqual([unstaged.additions, unstaged.deletions], [1, 0]);
     assert.deepEqual(untracked.files.map((file) => file.path).sort(), ['certs/private.pem', 'nested/.env.local', 'nested/new.ts']);
-    assert.ok(staged.files[0].warnings.some((warning) => warning === 'console.log (line 3)'));
-    assert.ok(!staged.files[0].warnings.some((warning) => warning.startsWith('TODO')));
-    assert.ok(unstaged.files[0].warnings.some((warning) => warning === 'debugger (line 4)'));
-    assert.ok(untracked.files.find((file) => file.path === 'nested/new.ts').warnings.includes('FIXME (line 1)'));
-    assert.ok(untracked.files.find((file) => file.path === 'nested/.env.local').warnings.some((warning) => warning.startsWith('Sensitive file:')));
-    assert.ok(untracked.files.find((file) => file.path === 'certs/private.pem').warnings.some((warning) => warning.startsWith('Sensitive file:')));
+    assert.ok(staged.files[0].warnings.some((warning) => warning === '发现 console.log 调用（第 3 行）'));
+    assert.ok(!staged.files[0].warnings.some((warning) => warning.startsWith('待办标记：TODO')));
+    assert.ok(unstaged.files[0].warnings.some((warning) => warning === '发现 debugger 语句（第 4 行）'));
+    assert.ok(untracked.files.find((file) => file.path === 'nested/new.ts').warnings.includes('待修复标记：FIXME（第 1 行）'));
+    assert.ok(untracked.files.find((file) => file.path === 'nested/.env.local').warnings.some((warning) => warning.startsWith('敏感文件：')));
+    assert.ok(untracked.files.find((file) => file.path === 'certs/private.pem').warnings.some((warning) => warning.startsWith('敏感文件：')));
 
     const stagedDiff = await loadReviewDiff(service, repo, 'staged', 'mixed.ts');
     const workDiff = await loadReviewDiff(service, repo, 'unstaged', 'mixed.ts');
@@ -68,7 +68,7 @@ async function main() {
     writeFileSync(join(repoRoot, 'mixed.ts'), 'latest disk value\n', 'utf8');
     const refreshedDiff = await loadReviewDiff(service, repo, 'unstaged', 'mixed.ts');
     assert.equal(refreshedDiff.newContent, 'latest disk value\n');
-    await assert.rejects(loadReviewDiff(service, repo, 'untracked', 'gone.txt'), /no longer exists/);
+    await assert.rejects(loadReviewDiff(service, repo, 'untracked', 'gone.txt'), /已不存在/);
     console.log('Review Changes integration passed (split status, numstat, nested untracked, warnings, fresh diffs).');
   } finally {
     rmSync(temp, { recursive: true, force: true });

@@ -41,7 +41,7 @@ async function main() {
     assert.equal(rootText.newContent, 'before\n');
     const rootBinary = await loadCommitDiffContents(gitService, repo, root, 'asset.bin');
     assert.equal(rootBinary.binary, true);
-    assert.match(rootBinary.newContent, /Binary file after/);
+    assert.match(rootBinary.newContent, /二进制文件（提交后）/);
 
     git(repoPath, 'mv', 'before name.txt', 'renamed name.txt');
     git(repoPath, 'rm', 'deleted.txt');
@@ -59,12 +59,12 @@ async function main() {
     assert.equal(renameContent.newContent, 'before\n');
     assert.equal(await readCommitContent(gitService, repo, { ref: renameContent.parent, file: rename.oldPath }), 'before\n');
     assert.equal(await readCommitContent(gitService, repo, { ref: '', file: 'before name.txt', empty: true }), '');
-    await assert.rejects(readCommitContent(gitService, repo, { ref: renameContent.parent, file: 'missing.txt' }), /Git show failed/);
+    await assert.rejects(readCommitContent(gitService, repo, { ref: renameContent.parent, file: 'missing.txt' }), /执行失败/);
     assert.equal((await loadCommitDiffContents(gitService, repo, changed, 'added.txt')).oldContent, '');
     assert.equal((await loadCommitDiffContents(gitService, repo, changed, 'added.txt')).newContent, 'brand new\n');
     assert.equal((await loadCommitDiffContents(gitService, repo, changed, 'deleted.txt')).oldContent, 'remove me\n');
     assert.equal((await loadCommitDiffContents(gitService, repo, changed, 'deleted.txt')).newContent, '');
-    await assert.rejects(loadCommitDiffContents(gitService, repo, changed, 'missing.txt'), /not part of commit/);
+    await assert.rejects(loadCommitDiffContents(gitService, repo, changed, 'missing.txt'), /不属于提交/);
 
     git(repoPath, 'checkout', '-b', 'side');
     writeFileSync(join(repoPath, 'side.txt'), 'side\n', 'utf8');

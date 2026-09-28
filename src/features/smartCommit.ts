@@ -45,16 +45,16 @@ export function generateCommitCandidates(
     commonDirectory = directories[0][index];
   }
   const scope = conventionalScope(commitWord(commonDirectory));
-  const target = (names.length === 1 ? names[0] : commitWord(commonDirectory) || `${names.length} files`) || 'staged files';
+  const target = (names.length === 1 ? names[0] : commitWord(commonDirectory) || `${names.length} 个文件`) || '已暂存文件';
   const statuses = changes.map(({ status }) => status[0]);
-  const verb = statuses.every((status) => status === 'A') ? 'add'
-    : statuses.every((status) => status === 'D') ? 'remove'
-      : statuses.every((status) => status === 'R') ? 'rename'
-        : 'update';
-  const subject = `${verb} ${target || 'staged files'}`;
+  const verb = statuses.every((status) => status === 'A') ? '新增'
+    : statuses.every((status) => status === 'D') ? '删除'
+      : statuses.every((status) => status === 'R') ? '重命名'
+        : '更新';
+  const subject = `${verb} ${target || '已暂存文件'}`;
   if (!conventional) {
-    return [`Update ${target}`, `Change ${target}`, `Improve ${target}`]
-      .map((label) => ({ label, description: 'Commit message' }));
+    return [`更新 ${target}`, `修改 ${target}`, `优化 ${target}`]
+      .map((label) => ({ label, description: '提交信息' }));
   }
   const preferredType = TYPES.includes(defaultType as CommitType) ? defaultType : 'chore';
   const ordered = [preferredType, ...TYPES].filter((type, index, all) =>
@@ -62,7 +62,7 @@ export function generateCommitCandidates(
   );
   return ordered.map((type) => ({
     label: `${type}${scope ? `(${scope})` : ''}: ${subject}`.trim(),
-    description: `Conventional Commit · ${type}`,
+    description: `规范提交 · ${type}`,
   }));
 }
 
@@ -72,14 +72,14 @@ export async function generateCommitMessage(git: GitService, repo: Repository): 
     repositories: Array<{ rootUri: { fsPath: string }; inputBox: { value: string } }>;
   } }>('vscode.git');
   if (!gitExtension) {
-    void vscode.window.showErrorMessage('GitPeek: The built-in Git extension is unavailable.');
+    void vscode.window.showErrorMessage('GitPeek：VS Code 内置 Git 扩展不可用。');
     return;
   }
 
   const api = gitExtension.isActive ? gitExtension.exports.getAPI(1) : (await gitExtension.activate()).getAPI(1);
   const repository = findGitRepositoryByRoot(api.repositories, repo.root);
   if (!repository) {
-    void vscode.window.showErrorMessage('GitPeek: Could not find this repository in the built-in Git extension.');
+    void vscode.window.showErrorMessage('GitPeek：在 VS Code 内置 Git 扩展中找不到此仓库。');
     return;
   }
 
@@ -87,11 +87,11 @@ export async function generateCommitMessage(git: GitService, repo: Repository): 
   try {
     staged = await git.run(repo, ['diff', '--cached', '--name-status', '-z']);
   } catch (error) {
-    void vscode.window.showErrorMessage(`GitPeek: Could not read staged files: ${String(error)}`);
+    void vscode.window.showErrorMessage(`GitPeek：无法读取已暂存文件：${String(error)}`);
     return;
   }
   if (!staged.trim()) {
-    void vscode.window.showInformationMessage('GitPeek: Stage files before generating a commit message.');
+    void vscode.window.showInformationMessage('GitPeek：请先暂存文件，再生成提交信息。');
     return;
   }
 
@@ -100,22 +100,22 @@ export async function generateCommitMessage(git: GitService, repo: Repository): 
   const defaultType = config.get<string>('defaultType', 'chore');
   const candidates = generateCommitCandidates(staged, conventional, defaultType);
   if (!candidates.length) {
-    void vscode.window.showInformationMessage('GitPeek: Stage files before generating a commit message.');
+    void vscode.window.showInformationMessage('GitPeek：请先暂存文件，再生成提交信息。');
     return;
   }
   const selected = await vscode.window.showQuickPick(candidates, {
-    placeHolder: 'Choose a commit message for the staged files',
-    title: `GitPeek: Generate Commit Message · ${repo.root}`,
+    placeHolder: '选择一条适用于已暂存文件的提交信息',
+    title: `GitPeek：生成提交信息 · ${repo.root}`,
   });
   if (!selected) return;
 
   if (repository.inputBox.value.trim()) {
     const replace = await vscode.window.showWarningMessage(
-      'The SCM commit message already contains a draft. Replace it?',
+      'SCM 提交信息中已有草稿，要替换吗？',
       { modal: true },
-      'Replace',
+      '替换',
     );
-    if (replace !== 'Replace') return;
+    if (replace !== '替换') return;
   }
   repository.inputBox.value = selected.label;
 }

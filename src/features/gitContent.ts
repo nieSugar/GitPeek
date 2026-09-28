@@ -27,7 +27,7 @@ export async function readCommitContent(git: GitService, repo: Repository, ref: 
 
 export async function loadCommitDetail(git: GitService, repo: Repository, ref: string): Promise<CommitDetail> {
   const hash = (await git.run(repo, ['rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`])).trim();
-  if (!/^[0-9a-f]{40,64}$/i.test(hash)) throw new Error(`Invalid commit hash returned for ${ref}`);
+  if (!/^[0-9a-f]{40,64}$/i.test(hash)) throw new Error(`Git 返回了无效的提交哈希：${ref}`);
   const detail = await git.commit(repo, hash);
   const [parentsLine] = (await git.run(repo, ['rev-list', '--parents', '-n', '1', hash])).trim().split('\n');
   const [, firstParent] = (parentsLine ?? '').split(' ');
@@ -55,7 +55,7 @@ export async function loadCommitDiffContents(
   filePath: string,
 ): Promise<CommitDiffContents> {
   const file = commit.files.find((item) => item.path === filePath || item.oldPath === filePath);
-  if (!file) throw new Error(`File is not part of commit ${commit.hash}: ${filePath}`);
+  if (!file) throw new Error(`文件不属于提交 ${commit.hash}：${filePath}`);
   const [parentsLine] = (await git.run(repo, ['rev-list', '--parents', '-n', '1', commit.hash])).trim().split('\n');
   const [, parent] = (parentsLine ?? '').split(' ');
   const stats = parent
@@ -94,5 +94,5 @@ function isBinaryNumstat(output: string, filePath: string): boolean {
 }
 
 function binaryLabel(path: string, side: string): string {
-  return `[Binary file ${side}: ${path}; GitPeek displays binary changes as metadata.]\n`;
+  return `[二进制文件（${side === 'before' ? '提交前' : side === 'after' ? '提交后' : '请求内容'}）：${path}；GitPeek 以元数据形式显示更改。]\n`;
 }

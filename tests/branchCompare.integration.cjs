@@ -69,7 +69,7 @@ async function main() {
     writeFileSync(join(repoRoot, 'unrelated.txt'), 'no shared history\n', 'utf8')
     git(repoRoot, 'add', '-A')
     git(repoRoot, 'commit', '-m', 'unrelated root')
-    await assert.rejects(loadBranchCompare(gitService, repo, 'main'), /no common ancestor/)
+    await assert.rejects(loadBranchCompare(gitService, repo, 'main'), /没有共同祖先/)
     console.log('Branch compare integration check passed (diverged tips, merge-base file set, auto/manual base, unrelated history).')
   } finally {
     rmSync(root, { recursive: true, force: true })
