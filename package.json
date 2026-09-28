@@ -95,6 +95,15 @@
         }
       ]
     },
+    "menus": {
+      "editor/title": [
+        {
+          "command": "gitpeek.fileHistory",
+          "when": "resourceScheme == file",
+          "group": "navigation@1"
+        }
+      ]
+    },
     "configuration": {
       "title": "GitPeek",
       "properties": {

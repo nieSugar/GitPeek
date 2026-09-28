@@ -60,14 +60,16 @@
 
 ## 阶段 3：File History 与 Sidebar 基础
 
-- [ ] 建立原生 TreeView，采用 Repository、Changes、Branch Changes、File History 四个区域。
-- [ ] 添加编辑器 File History 按钮。
-- [ ] 使用 `--follow` 查询文件历史，正确追踪重命名。
-- [ ] 默认加载最近 `20` 条，支持 Load More。
-- [ ] 展示提交摘要、作者、日期和短 Hash。
-- [ ] 实现约 `60 s` 缓存，HEAD 变化和 Refresh 时失效。
+- [x] 建立原生 TreeView，采用 Repository、Changes、Branch Changes、File History 四个区域。
+- [x] 添加编辑器 File History 按钮。
+- [x] 使用 `--follow` 查询文件历史，正确追踪重命名。
+- [x] 默认加载最近 `20` 条，支持 Load More。
+- [x] 展示提交摘要、作者、日期和短 Hash。
+- [x] 实现约 `60 s` 缓存，HEAD 变化和 Refresh 时失效。
 
 **验收条件**：普通文件与重命名文件均能正确分页；切换仓库不会混入其他仓库的历史。
+
+**执行记录**：`node tests/fileHistory.test.mjs` 验证分页、缓存和 HEAD 失效；GitService 真实仓库检查验证 `--follow` 跨 Rename。`npm run check` 与 `npm run build` 通过；TreeView 点击 Commit 待阶段 4 接通。
 
 ## 阶段 4：Commit Detail 与原生 Diff
 

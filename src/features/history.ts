@@ -1,0 +1,195 @@
+import * as path from 'node:path';
+import type * as vscode from 'vscode';
+import type { GitService } from '../git/GitService';
+import type { RepositoryService } from '../git/RepositoryService';
+import type { CommitInfo, Repository } from '../git/types';
+
+const DEFAULT_LIMIT = 20;
+const PAGE_SIZE = 20;
+const CACHE_TTL = 60_000;
+
+type ShowCommit = (repo: Repository, hash: string) => void | Promise<void>;
+type HistoryItem = vscode.TreeItem;
+export interface HistoryPage {
+  commits: CommitInfo[];
+  hasMore: boolean;
+}
+
+export class FileHistoryService {
+  private readonly cache = new Map<string, { head: string; expires: number; limit: number; commits: CommitInfo[]; hasMore: boolean }>();
+  private readonly heads = new Map<string, string>();
+  private readonly git: GitService;
+
+  constructor(git: GitService) {
+    this.git = git;
+  }
+
+  async load(repo: Repository, file: string, limit = DEFAULT_LIMIT): Promise<HistoryPage> {
+    const count = Math.max(1, Math.floor(limit));
+    let head = '';
+    try {
+      head = (await this.git.run(repo, ['rev-parse', '--verify', 'HEAD'])).trim();
+    } catch {
+      return { commits: [], hasMore: false };
+    }
+    const previousHead = this.heads.get(repo.id);
+    if (previousHead !== undefined && previousHead !== head) this.invalidate(repo.id);
+    this.heads.set(repo.id, head);
+
+    const key = `${repo.id}\0${file}`;
+    const cached = this.cache.get(key);
+    if (cached && cached.head === head && cached.expires > Date.now() && cached.limit >= count) {
+      return {
+        commits: cached.commits.slice(0, count),
+        hasMore: cached.commits.length > count || cached.hasMore,
+      };
+    }
+
+    const all = await this.git.history(repo, file, count + 1);
+    const commits = all.slice(0, count);
+    const hasMore = all.length > count;
+    this.cache.set(key, { head, expires: Date.now() + CACHE_TTL, limit: count, commits, hasMore });
+    return { commits, hasMore };
+  }
+
+  invalidate(repoId?: string): void {
+    if (repoId === undefined) {
+      this.cache.clear();
+      this.heads.clear();
+      return;
+    }
+    for (const key of this.cache.keys()) if (key.startsWith(`${repoId}\0`)) this.cache.delete(key);
+    this.heads.delete(repoId);
+  }
+}
+
+export function relativeHistoryPath(repositoryRoot: string, filePath: string): string {
+  return path.relative(repositoryRoot, filePath).replace(/\\/g, '/');
+}
+
+export interface HistoryFeature {
+  readonly provider: vscode.TreeDataProvider<vscode.TreeItem>;
+  show(uri: vscode.Uri): Promise<void>;
+  refresh(): void;
+}
+
+export async function registerHistory(
+  context: vscode.ExtensionContext,
+  git: GitService,
+  repositories: RepositoryService,
+  showCommit?: ShowCommit,
+): Promise<HistoryFeature> {
+  const vscode = await import('vscode');
+  const service = new FileHistoryService(git);
+  const changed = new vscode.EventEmitter<HistoryItem | undefined>();
+  const onDidChangeTreeData = changed.event;
+  let activeUri = vscode.window.activeTextEditor?.document.uri;
+  const initialLimit = (uri?: vscode.Uri) => Math.max(1, vscode.workspace.getConfiguration('gitpeek.history', uri).get<number>('limit', DEFAULT_LIMIT));
+  let limit = initialLimit(activeUri);
+  let generation = 0;
+
+  const provider: vscode.TreeDataProvider<HistoryItem> = {
+    onDidChangeTreeData,
+    getTreeItem: (item) => item,
+    getChildren: async () => {
+      const uri = activeUri;
+      if (!uri || uri.scheme !== 'file') return [message(vscode, 'Open a file to view its history.')];
+      const currentGeneration = generation;
+      const repo = await repositories.forUri(uri);
+      if (currentGeneration !== generation) return [];
+      if (!repo) return [message(vscode, 'This file is not inside a Git repository.')];
+
+      const file = relativeHistoryPath(repo.root, uri.fsPath);
+      try {
+        const page = await service.load(repo, file, limit);
+        if (currentGeneration !== generation || uri !== activeUri) return [];
+        const rows: HistoryItem[] = [message(vscode, vscode.workspace.asRelativePath(uri, false))];
+        rows.push(...page.commits.map((commit) => commitItem(vscode, repo, commit, !!showCommit)));
+        if (!page.commits.length) rows.push(message(vscode, 'No commits found for this file.'));
+        else if (page.hasMore) rows.push(moreItem(vscode));
+        return rows;
+      } catch (error) {
+        if (currentGeneration !== generation) return [];
+        return [message(vscode, `Unable to load file history: ${String(error)}`)];
+      }
+    },
+  };
+
+  const show = async (uri: vscode.Uri): Promise<void> => {
+    activeUri = uri;
+    limit = initialLimit(uri);
+    generation++;
+    changed.fire(undefined);
+    await vscode.commands.executeCommand('gitpeek.fileHistory.focus');
+  };
+  const refresh = (): void => {
+    service.invalidate();
+    generation++;
+    changed.fire(undefined);
+  };
+
+  context.subscriptions.push(
+    changed,
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      activeUri = editor?.document.uri;
+      limit = initialLimit(activeUri);
+      generation++;
+      changed.fire(undefined);
+    }),
+    vscode.window.onDidChangeWindowState((event) => {
+      if (event.focused) {
+        generation++;
+        changed.fire(undefined);
+      }
+    }),
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (!event.affectsConfiguration('gitpeek.history.limit')) return;
+      limit = initialLimit(activeUri);
+      refresh();
+    }),
+    vscode.commands.registerCommand('gitpeek.fileHistory', async () => {
+      const uri = vscode.window.activeTextEditor?.document.uri;
+      if (!uri) {
+        void vscode.window.showInformationMessage('GitPeek: Open a file to view its history.');
+        return;
+      }
+      await show(uri);
+    }),
+    vscode.commands.registerCommand('gitpeek.internal.fileHistory.loadMore', () => {
+      limit += PAGE_SIZE;
+      generation++;
+      changed.fire(undefined);
+    }),
+  );
+  if (showCommit) context.subscriptions.push(
+    vscode.commands.registerCommand('gitpeek.internal.fileHistory.showCommit', (repo: Repository, hash: string) => showCommit(repo, hash)),
+  );
+
+  return { provider, show, refresh };
+}
+
+function message(vscode: typeof import('vscode'), label: string): HistoryItem {
+  const item = new vscode.TreeItem(label);
+  return item;
+}
+
+function commitItem(vscode: typeof import('vscode'), repo: Repository, commit: CommitInfo, canOpen: boolean): HistoryItem {
+  const date = new Date(commit.date).toLocaleDateString();
+  const item = new vscode.TreeItem(`${commit.subject}`, vscode.TreeItemCollapsibleState.None);
+  item.description = `${commit.author} · ${date} · ${commit.shortHash}`;
+  item.tooltip = `${commit.subject}\n${commit.author} · ${date}\n${commit.hash}`;
+  item.iconPath = new vscode.ThemeIcon('git-commit');
+  if (canOpen) item.command = {
+    command: 'gitpeek.internal.fileHistory.showCommit',
+    title: 'Show Commit',
+    arguments: [repo, commit.hash],
+  };
+  return item;
+}
+
+function moreItem(vscode: typeof import('vscode')): HistoryItem {
+  const item = new vscode.TreeItem('Load More…', vscode.TreeItemCollapsibleState.None);
+  item.iconPath = new vscode.ThemeIcon('ellipsis');
+  item.command = { command: 'gitpeek.internal.fileHistory.loadMore', title: 'Load More' };
+  return item;
+}

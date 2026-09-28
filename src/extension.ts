@@ -3,6 +3,8 @@ import * as path from 'node:path';
 import { GitService } from './git/GitService';
 import { RepositoryService } from './git/RepositoryService';
 import { BlameController } from './features/blame';
+import { registerHistory } from './features/history';
+import { registerSidebar } from './features/sidebar';
 
 type GitRepository = {
   rootUri: vscode.Uri;
@@ -20,15 +22,18 @@ export function resolveScmInputBox(api: GitApi, repositoryRoot: string): GitRepo
   return api.repositories.find((repository) => path.resolve(repository.rootUri.fsPath) === target)?.inputBox;
 }
 
-export function activate(context: vscode.ExtensionContext): void {
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
   context.subscriptions.push(output);
   const git = new GitService((message) => output.appendLine(message));
   const repositories = new RepositoryService(git);
   const blame = new BlameController(git, repositories);
   context.subscriptions.push(blame);
+  const history = await registerHistory(context, git, repositories);
+  const sidebar = registerSidebar(context, history);
   const refresh = vscode.commands.registerCommand('gitpeek.refresh', () => {
     repositories.clearCache();
     blame.refresh();
+    sidebar.refresh();
     output.appendLine(`[${new Date().toISOString()}] Refresh requested`);
   });
   context.subscriptions.push(refresh);
