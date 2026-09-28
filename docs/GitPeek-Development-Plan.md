@@ -45,16 +45,18 @@
 
 ## 阶段 2：Current Line Blame
 
-- [ ] 监听编辑器和光标变化，默认采用 `300 ms` debounce。
-- [ ] 仅在当前行显示作者、相对时间和提交摘要。
-- [ ] 实现 Hover，展示作者、时间、Hash 和完整摘要。
-- [ ] 未提交行显示 `You · uncommitted changes`。
-- [ ] 未保存文档停止查询并显示 `Unsaved changes`。
-- [ ] 丢弃光标移动、切换文件或编辑内容后过期的异步结果。
-- [ ] 实现约 `30 s` 缓存、保存失效及 HEAD／分支变化失效。
-- [ ] 对超过 `2 MB` 或 `20,000` 行的文件关闭自动 Blame，并展示对应状态。
+- [x] 监听编辑器和光标变化，默认采用 `300 ms` debounce。
+- [x] 仅在当前行显示作者、相对时间和提交摘要。
+- [x] 实现 Hover，展示作者、时间、Hash 和完整摘要。
+- [x] 未提交行显示 `You · uncommitted changes`。
+- [x] 未保存文档停止查询并显示 `Unsaved changes`。
+- [x] 丢弃光标移动、切换文件或编辑内容后过期的异步结果。
+- [x] 实现约 `30 s` 缓存、保存失效及 HEAD／分支变化失效。
+- [x] 对超过 `2 MB` 或 `20,000` 行的文件关闭自动 Blame，并展示对应状态。
 
 **验收条件**：快速移动光标不频繁调用 Git，不出现旧结果覆盖新位置的问题；Commit 和 Diff 入口在阶段 4 接通。
+
+**执行记录**：`node tests/blame.test.cjs` 验证过期结果丢弃和未保存保护，`npm run check` 通过；Commit/Diff 链接与真实 Extension Host 交互待阶段 4/9 联调。
 
 ## 阶段 3：File History 与 Sidebar 基础
 

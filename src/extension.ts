@@ -1,5 +1,8 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
+import { GitService } from './git/GitService';
+import { RepositoryService } from './git/RepositoryService';
+import { BlameController } from './features/blame';
 
 type GitRepository = {
   rootUri: vscode.Uri;
@@ -19,7 +22,13 @@ export function resolveScmInputBox(api: GitApi, repositoryRoot: string): GitRepo
 
 export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(output);
+  const git = new GitService((message) => output.appendLine(message));
+  const repositories = new RepositoryService(git);
+  const blame = new BlameController(git, repositories);
+  context.subscriptions.push(blame);
   const refresh = vscode.commands.registerCommand('gitpeek.refresh', () => {
+    repositories.clearCache();
+    blame.refresh();
     output.appendLine(`[${new Date().toISOString()}] Refresh requested`);
   });
   context.subscriptions.push(refresh);
