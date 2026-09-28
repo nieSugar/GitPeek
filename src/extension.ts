@@ -5,6 +5,7 @@ import { RepositoryService } from './git/RepositoryService';
 import { BlameController } from './features/blame';
 import { registerHistory } from './features/history';
 import { registerSidebar } from './features/sidebar';
+import { registerCommitFeatures } from './features/commitDetail';
 
 type GitRepository = {
   rootUri: vscode.Uri;
@@ -26,9 +27,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(output);
   const git = new GitService((message) => output.appendLine(message));
   const repositories = new RepositoryService(git);
-  const blame = new BlameController(git, repositories);
+  const commits = registerCommitFeatures(context, git);
+  const blame = new BlameController(git, repositories, commits);
   context.subscriptions.push(blame);
-  const history = await registerHistory(context, git, repositories);
+  const history = await registerHistory(context, git, repositories, commits.showCommit);
   const sidebar = registerSidebar(context, history);
   const refresh = vscode.commands.registerCommand('gitpeek.refresh', () => {
     repositories.clearCache();

@@ -73,15 +73,17 @@
 
 ## 阶段 4：Commit Detail 与原生 Diff
 
-- [ ] 展示提交作者、时间、完整 Message、Changed Files 和增删行统计。
-- [ ] 实现 `TextDocumentContentProvider` 和包含仓库上下文的历史文件 URI。
-- [ ] 通过 `vscode.diff` 打开文件差异。
-- [ ] 正确处理 Root Commit、Added、Deleted 和 Rename：缺失的一侧使用空内容，Rename 对比父提交的 oldPath 与当前提交的 newPath。
-- [ ] 明确 Merge Commit 的父提交比较规则，以及二进制文件的展示方式。
-- [ ] 接通 Blame、Hover 和 File History 的 Commit Detail 入口。
-- [ ] 实现 View Diff、Copy Commit Hash，统一“点击 Commit 看详情、点击文件看 Diff”。
+- [x] 展示提交作者、时间、完整 Message、Changed Files 和增删行统计。
+- [x] 实现 `TextDocumentContentProvider` 和包含仓库上下文的历史文件 URI。
+- [x] 通过 `vscode.diff` 打开文件差异。
+- [x] 正确处理 Root Commit、Added、Deleted 和 Rename：缺失的一侧使用空内容，Rename 对比父提交的 oldPath 与当前提交的 newPath。
+- [x] 明确 Merge Commit 的父提交比较规则，以及二进制文件的展示方式。
+- [x] 接通 Blame、Hover 和 File History 的 Commit Detail 入口。
+- [x] 实现 View Diff、Copy Commit Hash，统一“点击 Commit 看详情、点击文件看 Diff”。
 
 **验收条件**：上述边界均能打开正确内容；读取失败与“该侧文件不存在”能够区分。
+
+**执行记录**：临时仓库检查通过 Root、Added、Deleted、Rename、二进制、Merge 第一父提交和读取失败；`npm run check`、`npm run build` 通过。原生 VS Code 交互待阶段 9 联调。
 
 ## 阶段 5：Branch vs Base
 
