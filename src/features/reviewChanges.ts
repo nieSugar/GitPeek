@@ -34,7 +34,7 @@ class ReviewSidebar implements vscode.TreeDataProvider<ReviewNode> {
 
   getChildren(element?: ReviewNode): ReviewNode[] {
     if (!element) {
-      if (this.error) return [{ kind: 'message', message: `Unable to load changes: ${this.error}` }];
+      if (this.error) return [{ kind: 'message', message: this.error }];
       if (!this.snapshot) return [{ kind: 'message', message: 'Run GitPeek: Review Changes to load this view.' }];
       if (!this.snapshot.fileCount) return [{ kind: 'message', message: 'No staged, unstaged, or untracked changes.' }];
       return this.snapshot.groups.map((group) => ({ kind: 'section', snapshot: this.snapshot!, section: group.section }));
@@ -91,8 +91,18 @@ export async function registerReviewChanges(
     return currentRepo;
   };
 
+  const enabled = (): boolean => vscode.workspace.getConfiguration('gitpeek').get<boolean>('enabled', true);
+  const clearDisabled = (): void => {
+    refreshGeneration++;
+    currentRepo = undefined;
+    sidebar.setSnapshot(undefined, 'Review Changes is disabled. Enable gitpeek.enabled to use it.');
+    statusBar.hide();
+  };
+
   const refresh = async (repo?: Repository): Promise<ReviewSnapshot | undefined> => {
+    if (!enabled()) { clearDisabled(); return undefined; }
     const target = await resolveRepo(repo);
+    if (!enabled()) { clearDisabled(); return undefined; }
     const generation = ++refreshGeneration;
     currentRepo = target;
     if (!target) {
@@ -109,7 +119,7 @@ export async function registerReviewChanges(
       return snapshot;
     } catch (error) {
       if (generation === refreshGeneration && currentRepo?.id === target.id) {
-        sidebar.setSnapshot(undefined, errorText(error));
+        sidebar.setSnapshot(undefined, `Unable to load changes: ${errorText(error)}`);
         statusBar.hide();
       }
       throw error;
@@ -117,6 +127,7 @@ export async function registerReviewChanges(
   };
 
   const refreshActiveEditor = async (): Promise<void> => {
+    if (!enabled()) { clearDisabled(); return; }
     const uri = vscode.window.activeTextEditor?.document.uri;
     if (!uri || uri.scheme !== 'file') {
       refreshGeneration++;
@@ -126,6 +137,7 @@ export async function registerReviewChanges(
       return;
     }
     const repo = await repos.forUri(uri);
+    if (!enabled()) { clearDisabled(); return; }
     if (vscode.window.activeTextEditor?.document.uri.toString() !== uri.toString()) return;
     if (!repo) {
       refreshGeneration++;
@@ -139,12 +151,20 @@ export async function registerReviewChanges(
 
   const show = async (repo?: Repository): Promise<void> => {
     try {
+      if (!enabled()) {
+        await vscode.window.showInformationMessage('GitPeek Review Changes is disabled. Enable gitpeek.enabled to use it.');
+        return;
+      }
       const target = await resolveRepo(repo) ?? await repos.pickRepository();
       if (!target) {
         await vscode.window.showInformationMessage('GitPeek: Open a Git repository to review changes.');
         return;
       }
       const snapshot = await refresh(target);
+      if (!enabled()) {
+        await vscode.window.showInformationMessage('GitPeek Review Changes is disabled. Enable gitpeek.enabled to use it.');
+        return;
+      }
       if (!snapshot) return;
       const items: Array<vscode.QuickPickItem & { file?: ReviewFile }> = [];
       for (const group of snapshot.groups) {
@@ -176,7 +196,20 @@ export async function registerReviewChanges(
 
   const showDiff = async (repo: Repository, section: ReviewSection, filePath: string): Promise<void> => {
     try {
+      if (!enabled()) {
+        await vscode.window.showInformationMessage('GitPeek Review Changes is disabled. Enable gitpeek.enabled to use it.');
+        return;
+      }
+      const generation = refreshGeneration;
       const diff = await loadReviewDiff(git, repo, section, filePath);
+      if (!enabled()) {
+        await vscode.window.showInformationMessage('GitPeek Review Changes is disabled. Enable gitpeek.enabled to use it.');
+        return;
+      }
+      if (generation !== refreshGeneration) {
+        await vscode.window.showInformationMessage('GitPeek changes were refreshed. Run Review Changes again.');
+        return;
+      }
       const revision = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const oldUri = reviewUri(repo, revision, section, diff.file.oldPath ?? diff.file.path, 'before');
       const newUri = reviewUri(repo, revision, section, diff.file.path, 'after');
@@ -206,6 +239,11 @@ export async function registerReviewChanges(
     vscode.commands.registerCommand('gitpeek.reviewChanges', (repo?: Repository) => show(repo)),
     vscode.commands.registerCommand(SHOW_DIFF, showDiff),
     vscode.window.onDidChangeActiveTextEditor(() => { void refreshActiveEditor(); }),
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (!event.affectsConfiguration('gitpeek.enabled')) return;
+      if (enabled()) void refreshActiveEditor();
+      else clearDisabled();
+    }),
     vscode.workspace.onDidSaveTextDocument((document) => {
       if (currentRepo && isInside(currentRepo.root, document.uri.fsPath)) void refresh(currentRepo).catch(() => undefined);
     }),

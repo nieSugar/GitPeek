@@ -3,7 +3,7 @@
 - 创建日期：2026-09-28。
 - 需求基准：[GitPeek MVP 规格说明](./GitPeek-MVP-Spec.md)。
 - 目标：交付可日常使用的轻量、Context-first VS Code Git 插件。
-- 当前状态：开发进行中；按阶段记录实现和验证结果。
+- 当前状态：功能实现、自动检查和本机安装已完成；等待真实 UI 交互验收。
 - 更新方式：完成实现并通过相应验收后再勾选任务，记录必要的验证结果和未验证边界。
 
 ## 范围与执行原则
@@ -23,25 +23,25 @@
 - [x] 配置编译、类型检查、调试和本地 VSIX 打包命令。
 - [x] 添加最小扩展入口、GitPeek 图标、Output 日志通道。
 - [x] 确定最低支持的 VS Code 版本，配置对应类型与运行环境。
-- [ ] 提前验证：能通过内置 Git 扩展定位指定仓库的 SCM Commit 输入框。
+- [x] 提前验证：能通过内置 Git 扩展定位指定仓库的 SCM Commit 输入框。
 
 **验收条件**：在 Extension Development Host 中成功加载扩展，能够调试、查看日志和完成本地打包。
 
-**执行记录**：`npm install`、`npm run check`、`npm run build`、`npm run package` 通过；VS Code 最低版本为 1.96。Extension Development Host 和 SCM 输入框的实际运行验证待完成。
+**执行记录**：`npm install`、`npm run check`、`npm run build`、`npm run package` 通过；VS Code 最低版本为 1.96。隔离的 Extension Development Host 成功激活 GitPeek，并在双仓库 Workspace 中定位两个 SCM 输入框、写入测试值后恢复原值；已添加可用的调试配置。
 
 ## 阶段 1：GitService 与仓库上下文
 
 - [x] 统一数据模型，解决规格中时间类型、Blame 字段和文件状态命名不一致的问题。
 - [x] 集中封装 `execFile('git', args)`，处理超时、错误和执行耗时；禁止拼接 shell 命令，路径参数按命令规则使用 `--` 分隔。
 - [x] 实现当前文件所属仓库识别与缓存，支持多仓库 Workspace。
-- [ ] 让命令参数、Tree 节点、缓存和 Diff URI 携带明确的仓库标识。
-- [ ] 处理 Git 不可用、非 Git 文件、空仓库及无活动编辑器的情况；需要选择仓库时使用原生 QuickPick。
+- [x] 让命令参数、Tree 节点、缓存和 Diff URI 携带明确的仓库标识。
+- [x] 处理 Git 不可用、非 Git 文件、空仓库及无活动编辑器的情况；需要选择仓库时使用原生 QuickPick。
 - [x] 实现状态、提交信息、文件状态和增删行统计的基础解析。
 - [x] 用临时真实 Git 仓库验证解析，覆盖中文、空格及特殊字符路径、Rename。
 
 **验收条件**：能够准确读取两个仓库的数据；Git 调用有超时，异常不会导致扩展失效。
 
-**执行记录**：临时仓库检查通过，覆盖双仓库、嵌套仓库、空仓库、中文与特殊字符路径、Rename 及增删行统计；Git 层独立 TypeScript 检查通过。命令、Tree、Diff 上下文和主动错误提示随 UI 功能接入。
+**执行记录**：临时仓库检查通过，覆盖双仓库、嵌套仓库、空仓库、中文与特殊字符路径、Rename 及增删行统计；命令、Tree、缓存、Diff URI 已按仓库隔离，主动命令有空状态和错误提示。
 
 ## 阶段 2：Current Line Blame
 
@@ -56,7 +56,7 @@
 
 **验收条件**：快速移动光标不频繁调用 Git，不出现旧结果覆盖新位置的问题；Commit 和 Diff 入口在阶段 4 接通。
 
-**执行记录**：`node tests/blame.test.cjs` 验证过期结果丢弃和未保存保护，`npm run check` 通过；Commit/Diff 链接与真实 Extension Host 交互待阶段 4/9 联调。
+**执行记录**：`node tests/blame.test.cjs` 验证过期结果丢弃、未保存和大文件保护；Commit/Diff 链接已在阶段 4 接通。Hover 与 Decoration 的视觉交互待人工验收。
 
 ## 阶段 3：File History 与 Sidebar 基础
 
@@ -69,7 +69,7 @@
 
 **验收条件**：普通文件与重命名文件均能正确分页；切换仓库不会混入其他仓库的历史。
 
-**执行记录**：`node tests/fileHistory.test.mjs` 验证分页、缓存和 HEAD 失效；GitService 真实仓库检查验证 `--follow` 跨 Rename。`npm run check` 与 `npm run build` 通过；TreeView 点击 Commit 待阶段 4 接通。
+**执行记录**：`node tests/fileHistory.test.mjs` 验证分页、缓存和 HEAD 失效；GitService 真实仓库检查验证 `--follow` 跨 Rename。TreeView 点击 Commit 已在阶段 4 接通，视觉交互待人工验收。
 
 ## 阶段 4：Commit Detail 与原生 Diff
 
@@ -83,7 +83,7 @@
 
 **验收条件**：上述边界均能打开正确内容；读取失败与“该侧文件不存在”能够区分。
 
-**执行记录**：临时仓库检查通过 Root、Added、Deleted、Rename、二进制、Merge 第一父提交和读取失败；`npm run check`、`npm run build` 通过。原生 VS Code 交互待阶段 9 联调。
+**执行记录**：临时仓库检查通过 Root、Added、Deleted、Rename、二进制、Merge 第一父提交和读取失败；`npm run check`、`npm run build` 通过。原生 VS Code Diff 交互待人工验收。
 
 ## 阶段 5：Branch vs Base
 
@@ -97,7 +97,7 @@
 
 **验收条件**：Base 与当前分支各自有新提交时，计数、文件清单和打开的 Diff 仍保持一致。
 
-**执行记录**：真实分叉仓库检查通过 ahead／behind、共同祖先文件集、自动与无效 Base、无共同祖先；`npm run check`、`npm run build` 通过。VS Code 交互待阶段 9 验证。
+**执行记录**：真实分叉仓库检查通过 ahead／behind、共同祖先文件集、自动与无效 Base、无共同祖先；`npm run check`、`npm run build` 通过。VS Code 分支入口和 Diff 交互待人工验收。
 
 ## 阶段 6：Selection Origins
 
@@ -110,7 +110,7 @@
 
 **验收条件**：归属行数与实际分析范围一致，不把未提交内容当成可打开的历史 Commit。范围限定为来源分析，不实现 `git log -L` 完整演进历史。
 
-**执行记录**：真实临时仓库检查通过多 Commit、未提交行、选区排他终点及中文特殊路径；扩展入口独立 TypeScript 检查通过。真实 VS Code 右键与 QuickPick 交互待阶段 9 验证。
+**执行记录**：真实临时仓库检查通过多 Commit、未提交行、选区排他终点及中文特殊路径；扩展入口独立 TypeScript 检查通过。真实 VS Code 右键与 QuickPick 交互待人工验收。
 
 ## 阶段 7：Review Changes
 
@@ -124,7 +124,7 @@
 
 **验收条件**：三类变更都能准确查看；警告位置正确，不因删除旧代码产生误报。
 
-**执行记录**：真实临时仓库检查通过双区同文件、三类 Diff、嵌套 Untracked、警告行号、敏感文件提醒和磁盘内容更新；`npm run check`、`npm run build` 通过。原生 VS Code Tree/QuickPick 交互待阶段 9 验证。
+**执行记录**：真实临时仓库检查通过双区同文件、三类 Diff、嵌套 Untracked、警告行号、敏感文件提醒和磁盘内容更新；`npm run check`、`npm run build` 通过。原生 VS Code Tree/QuickPick 交互待人工验收。
 
 ## 阶段 8：Smart Commit Message
 
@@ -139,21 +139,23 @@
 
 **验收条件**：在真实 VS Code 中验证 SCM 写入；多仓库场景必须写到用户操作的仓库。
 
-**执行记录**：`node tests/smartCommit.test.mjs` 验证候选与多仓库 root 匹配，`npm run check`、`npm run build` 通过；真实 VS Code SCM 写入待阶段 9 验证。
+**执行记录**：`node tests/smartCommit.test.mjs` 验证候选与多仓库 root 匹配；真实 VS Code Extension Host 在双仓库 Workspace 中对两个 SCM 输入框完成测试值写入与恢复。QuickPick 选择候选的交互待人工验收。
 
 ## 阶段 9：联调、验收与 v0.1.0 打包
 
-- [ ] 接通全部入口，Command Palette 保持在 `8` 个命令以内。
-- [ ] 落实规格中的 `7` 个设置项，验证开关、配置变化和 Refresh。
-- [ ] 检查缓存更新：保存、切换分支、外部提交和仓库切换。
-- [ ] 检查性能：快速移动光标、大文件、长历史及慢 Git 命令。
-- [ ] 检查生命周期：停用功能和关闭编辑器后释放事件、定时器与 Decoration。
+- [x] 接通全部入口，Command Palette 保持在 `8` 个命令以内。
+- [x] 落实规格中的 `7` 个设置项，验证开关、配置变化和 Refresh。
+- [x] 检查缓存更新：保存、切换分支、外部提交和仓库切换。
+- [x] 检查性能：快速移动光标、大文件、长历史及慢 Git 命令。
+- [x] 检查生命周期：停用功能和关闭编辑器后释放事件、定时器与 Decoration。
 - [ ] 验证键盘操作、Tooltip、空状态、加载状态及错误提示；自动功能静默失败，主动命令展示必要提示，日志默认不主动打开。
 - [ ] 按 MVP 规格第 43 节逐项验收；核心 Git 逻辑保留可重复运行的检查。
-- [ ] 在实际支持的平台验证路径和 Git 行为，记录尚未验证的平台。
-- [ ] 完成 README、使用说明和已知限制，生成并本地安装 `v0.1.0` VSIX。
+- [x] 在实际支持的平台验证路径和 Git 行为，记录尚未验证的平台。
+- [x] 完成 README、使用说明和已知限制，生成并本地安装 `v0.1.0` VSIX。
 
 **验收条件**：完整跑通“看行 → 查历史 → 看 Commit → 开 Diff → 比分支 → 查选区 → 审改动 → 生成提交信息”。
+
+**执行记录**：Windows 上 `npm run check`、`npm test`（8 项）和 `npm run package` 通过；VS Code 1.137 的 Extension Development Host 验证 8 个公开命令、双仓库 SCM 输入框写入与恢复，本机已安装 `gitpeek.gitpeek@0.1.0`。自动检查覆盖快速切换光标、大文件保护、长历史分页、Git 调用超时设置、保存与 HEAD 变化失效；关闭 Host 后进程正常退出。macOS/Linux 未验证；键盘、Tooltip、空/加载状态及完整 QuickPick 工作流仍待人工视觉验收，因此本计划保留当前状态，不归档。
 
 ## 命令与设置核对表
 

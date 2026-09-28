@@ -11,21 +11,7 @@ import { registerSelectionOrigins } from './features/selectionOrigins';
 import { registerReviewChanges } from './features/reviewChanges';
 import { generateCommitMessage } from './features/smartCommit';
 
-type GitRepository = {
-  rootUri: vscode.Uri;
-  inputBox: { value: string };
-};
-
-type GitApi = { repositories: GitRepository[] };
-type GitExtensionExports = { getAPI(version: 1): GitApi };
-
 const output = vscode.window.createOutputChannel('GitPeek');
-
-/** Resolve the built-in Git SCM input box for one repository root. */
-export function resolveScmInputBox(api: GitApi, repositoryRoot: string): GitRepository['inputBox'] | undefined {
-  const target = path.resolve(repositoryRoot);
-  return api.repositories.find((repository) => path.resolve(repository.rootUri.fsPath) === target)?.inputBox;
-}
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   context.subscriptions.push(output);
@@ -60,6 +46,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
   context.subscriptions.push(refresh);
   context.subscriptions.push(vscode.commands.registerCommand('gitpeek.generateCommitMessage', async () => {
+    if (!vscode.workspace.getConfiguration('gitpeek').get<boolean>('enabled', true)) {
+      await vscode.window.showInformationMessage('GitPeek is disabled in settings.');
+      return;
+    }
     const uri = vscode.window.activeTextEditor?.document.uri;
     const repo = (uri ? await repositories.forUri(uri) : undefined) ?? await repositories.pickRepository();
     if (!repo) {
@@ -69,25 +59,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await generateCommitMessage(git, repo);
   }));
   output.appendLine('GitPeek activated.');
-  void inspectGitScm();
-}
-
-async function inspectGitScm(): Promise<void> {
-  try {
-    const extension = vscode.extensions.getExtension<GitExtensionExports>('vscode.git');
-    if (!extension) {
-      output.appendLine('Built-in Git extension is unavailable.');
-      return;
-    }
-    const api = extension.isActive ? extension.exports.getAPI(1) : (await extension.activate()).getAPI(1);
-    output.appendLine(`Built-in Git API v1 available (${api.repositories.length} repositories).`);
-    for (const repository of api.repositories) {
-      const inputBox = resolveScmInputBox(api, repository.rootUri.fsPath);
-      output.appendLine(`SCM input box ${inputBox ? 'resolved' : 'missing'}: ${repository.rootUri.fsPath}`);
-    }
-  } catch (error) {
-    output.appendLine(`SCM probe failed: ${String(error)}`);
-  }
 }
 
 export function deactivate(): void {}

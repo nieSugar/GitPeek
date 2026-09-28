@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 import { findGitRepositoryByRoot, generateCommitCandidates } from '../src/features/smartCommit.ts';
+
+const require = createRequire(import.meta.url);
+const { run: runHostProbe } = require('./extension-host.cjs');
 
 const staged = 'M\0src/device/config.ts\0A\0src/device/new.ts\0';
 const conventional = generateCommitCandidates(staged, true, 'fix');
@@ -29,5 +33,37 @@ const first = { rootUri: { fsPath: 'C:\\repo-one' }, inputBox: { value: '' } };
 const second = { rootUri: { fsPath: 'C:\\Work\\repo-two\\' }, inputBox: { value: 'draft' } };
 assert.equal(findGitRepositoryByRoot([first, second], 'c:/work/repo-two'), second);
 assert.equal(findGitRepositoryByRoot([first, second], 'C:/missing'), undefined);
+
+const scmInput = { value: 'keep this draft' };
+const repository = { rootUri: { fsPath: 'C:/workspace/project' }, inputBox: scmInput };
+const extensions = {
+  'gitpeek.gitpeek': {
+    isActive: false,
+    async activate() { this.isActive = true; },
+  },
+  'vscode.git': {
+    isActive: false,
+    async activate() {
+      this.isActive = true;
+      return { getAPI(version) { assert.equal(version, 1); return { repositories: [repository] }; } };
+    },
+  },
+};
+const hostVscode = {
+  extensions: { getExtension(id) { return extensions[id]; } },
+  commands: { async getCommands(filterInternal) { assert.equal(filterInternal, true); return [...PUBLIC_COMMANDS, '_internal']; } },
+  workspace: { workspaceFolders: [{ uri: { fsPath: 'C:/workspace' } }] },
+};
+const PUBLIC_COMMANDS = [
+  'gitpeek.fileHistory', 'gitpeek.blameCurrentLine', 'gitpeek.selectionOrigins', 'gitpeek.compareWithBase',
+  'gitpeek.showBranchChanges', 'gitpeek.reviewChanges', 'gitpeek.generateCommitMessage', 'gitpeek.refresh',
+];
+const hostResult = await runHostProbe({ vscode: hostVscode });
+assert.equal(hostResult.publicCommands, 8);
+assert.equal(hostResult.repositories[0].root, repository.rootUri.fsPath);
+assert.equal(scmInput.value, 'keep this draft', 'the host probe must not change the SCM draft');
+await assert.rejects(runHostProbe({
+  vscode: { ...hostVscode, commands: { async getCommands() { return []; } } },
+}), /commands are missing/);
 
 console.log('Smart commit candidate and multi-repository checks passed.');

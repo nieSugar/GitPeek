@@ -91,7 +91,11 @@ export class BlameController implements vscode.Disposable {
     }
 
     const delay = immediate ? 0 : Math.max(0, config.get<number>('blame.delay', 300));
-    this.pending = setTimeout(() => { void this.update(editor, current); }, delay);
+    const pending = setTimeout(() => {
+      if (this.pending === pending) this.pending = undefined;
+      void this.update(editor, current);
+    }, delay);
+    this.pending = pending;
   }
 
   private async update(editor: vscode.TextEditor, generation: number): Promise<void> {
@@ -138,6 +142,12 @@ export class BlameController implements vscode.Disposable {
           return;
         }
         if (blame) this.cache.set(key, { expires: Date.now() + 30_000, value: blame });
+      }
+      const latestHead = (await this.git.run(repo, ['rev-parse', '--verify', 'HEAD'])).trim();
+      if (!isCurrent()) return;
+      if (latestHead !== head) {
+        this.schedule(true);
+        return;
       }
       if (!blame || !isCurrent()) return;
       if (/^0+$/.test(blame.hash) || blame.author === 'Not Committed Yet') {

@@ -131,12 +131,14 @@ export function registerBranchCompare(
   let currentItems: vscode.TreeItem[] = []
   let generation = 0
   let editorGeneration = 0
-  const watchers = new Set<string>()
+  let watchedRepoId: string | undefined
+  let watcherRequest = 0
+  let repoWatchers: vscode.Disposable[] = []
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 90)
   statusBar.text = '$(git-branch) GitPeek: Compare with Base'
   statusBar.tooltip = 'GitPeek: Compare the current branch with its base'
   statusBar.command = 'gitpeek.showBranchChanges'
-  statusBar.show()
+  statusBar.hide()
 
   const provider = vscode.workspace.registerTextDocumentContentProvider(CONTENT_SCHEME, content)
   context.subscriptions.push(changed, statusBar, provider)
@@ -146,25 +148,53 @@ export function registerBranchCompare(
     changed.fire()
   }
 
+  const enabled = (): boolean => vscode.workspace.getConfiguration('gitpeek').get<boolean>('enabled', true)
+  const clearWatchers = (): void => {
+    watcherRequest++
+    for (const watcher of repoWatchers) watcher.dispose()
+    repoWatchers = []
+    watchedRepoId = undefined
+  }
+  const clearState = (message: string): void => {
+    generation++
+    currentSummary = undefined
+    statusBar.hide()
+    updateView(message)
+  }
+
   const installWatchers = async (repo: Repository): Promise<void> => {
-    if (watchers.has(repo.id)) return
-    watchers.add(repo.id)
-    const paths = await Promise.all(['HEAD', 'packed-refs', 'refs/heads', 'logs/HEAD'].map(async (path) =>
-      resolve(repo.root, (await git.run(repo, ['rev-parse', '--git-path', path])).trim())))
+    if (!enabled() || activeRepo?.id !== repo.id || watchedRepoId === repo.id) return
+    clearWatchers()
+    const request = watcherRequest
+    watchedRepoId = repo.id
+    let paths: string[]
+    try {
+      paths = await Promise.all(['HEAD', 'packed-refs', 'refs/heads', 'logs/HEAD'].map(async (path) =>
+        resolve(repo.root, (await git.run(repo, ['rev-parse', '--git-path', path])).trim())))
+    } catch {
+      if (request === watcherRequest) watchedRepoId = undefined
+      return
+    }
+    if (request !== watcherRequest || !enabled() || activeRepo?.id !== repo.id) return
+    const watchers: vscode.FileSystemWatcher[] = []
     for (const path of paths) {
       const isHeadsDir = path.endsWith('refs/heads')
       const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(isHeadsDir ? path : dirname(path)), isHeadsDir ? '**/*' : basename(path)))
-      watcher.onDidChange(() => { if (activeRepo?.id === repo.id) void refresh() })
-      watcher.onDidCreate(() => { if (activeRepo?.id === repo.id) void refresh() })
-      watcher.onDidDelete(() => { if (activeRepo?.id === repo.id) void refresh() })
-      context.subscriptions.push(watcher)
+      watcher.onDidChange(() => { if (enabled() && activeRepo?.id === repo.id) void refresh() })
+      watcher.onDidCreate(() => { if (enabled() && activeRepo?.id === repo.id) void refresh() })
+      watcher.onDidDelete(() => { if (enabled() && activeRepo?.id === repo.id) void refresh() })
+      watchers.push(watcher)
     }
+    repoWatchers = watchers
+    context.subscriptions.push(...watchers)
   }
 
   const refresh = async (): Promise<void> => {
+    if (!enabled()) { clearState('GitPeek Branch Compare is disabled. Enable gitpeek.enabled to use it.'); return }
     const repo = activeRepo
-    if (!repo) return
+    if (!repo) { statusBar.hide(); currentSummary = undefined; updateView('Open a Git file to compare its branch.'); return }
     const request = ++generation
+    statusBar.show()
     try {
       const configured = vscode.workspace.getConfiguration('gitpeek').get<string>('baseBranch', 'auto')
       const base = await resolveBaseBranch(git, repo, configured)
@@ -186,6 +216,11 @@ export function registerBranchCompare(
 
   const openDiff = async (summary: BranchCompareSummary, file: FileChange): Promise<void> => {
     try {
+      if (!enabled()) {
+        await vscode.window.showInformationMessage('GitPeek Branch Compare is disabled. Enable gitpeek.enabled to use it.')
+        return
+      }
+      const request = generation
       const oldPath = file.status === 'R' ? file.oldPath ?? file.path : file.path
       const oldEmpty = file.status === 'A'
       const newEmpty = file.status === 'D'
@@ -194,6 +229,14 @@ export function registerBranchCompare(
       const binary = stats.split('\0').some((record) => record.startsWith('-\t-\t'))
       const oldContent = oldEmpty ? '' : binary ? binaryLabel(oldPath, 'before') : await git.run(summary.repo, ['show', `${summary.mergeBase}:${oldPath}`])
       const newContent = newEmpty ? '' : binary ? binaryLabel(file.path, 'after') : await git.run(summary.repo, ['show', `${summary.head}:${file.path}`])
+      if (!enabled()) {
+        await vscode.window.showInformationMessage('GitPeek Branch Compare is disabled. Enable gitpeek.enabled to use it.')
+        return
+      }
+      if (request !== generation || currentSummary?.head !== summary.head) {
+        await vscode.window.showInformationMessage('GitPeek branch data changed. Run Compare with Base again.')
+        return
+      }
       const oldUri = content.uri(summary.repo, summary.mergeBase, oldPath, oldEmpty, binary)
       const newUri = content.uri(summary.repo, summary.head, file.path, newEmpty, binary)
       content.cache(oldUri, oldContent)
@@ -206,17 +249,30 @@ export function registerBranchCompare(
   }
 
   const show = async (repo?: Repository): Promise<void> => {
+    if (!enabled()) {
+      await vscode.window.showInformationMessage('GitPeek Branch Compare is disabled. Enable gitpeek.enabled to use it.')
+      return
+    }
     const editorRepo = vscode.window.activeTextEditor
       ? await repositories.forUri(vscode.window.activeTextEditor.document.uri)
       : undefined
+    if (!enabled()) {
+      await vscode.window.showInformationMessage('GitPeek Branch Compare is disabled. Enable gitpeek.enabled to use it.')
+      return
+    }
     const selectedRepo = repo ?? editorRepo ?? await repositories.pickRepository()
     if (!selectedRepo) {
       await vscode.window.showInformationMessage('GitPeek: Open a file in a Git repository or select a repository.')
       return
     }
     activeRepo = selectedRepo
+    statusBar.show()
     await installWatchers(selectedRepo)
     await refresh()
+    if (!enabled()) {
+      await vscode.window.showInformationMessage('GitPeek Branch Compare is disabled. Enable gitpeek.enabled to use it.')
+      return
+    }
     const summary = currentSummary
     if (!summary) {
       await vscode.window.showErrorMessage(`GitPeek: ${currentItems[0]?.label ?? 'Branch comparison is unavailable.'}`)
@@ -230,33 +286,59 @@ export function registerBranchCompare(
       ...summary.files.map((file) => ({ label: `${statusLabel(file.status)} ${file.path}`, description: `+${file.additions ?? 0} −${file.deletions ?? 0}${file.oldPath ? ` · from ${file.oldPath}` : ''}`, file })),
     ]
     const selected = await vscode.window.showQuickPick(choices, { title: `${summary.branch} vs ${summary.base}`, matchOnDescription: true, placeHolder: 'Select a commit or file' })
+    if (!enabled()) {
+      await vscode.window.showInformationMessage('GitPeek Branch Compare is disabled. Enable gitpeek.enabled to use it.')
+      return
+    }
     if (selected?.commit) await showCommit(summary.repo, selected.commit)
     else if (selected?.file) await openDiff(summary, selected.file)
   }
 
   const handleActiveEditor = async (editor: vscode.TextEditor | undefined): Promise<void> => {
+    if (!enabled()) {
+      editorGeneration++
+      activeRepo = undefined
+      clearWatchers()
+      clearState('GitPeek Branch Compare is disabled. Enable gitpeek.enabled to use it.')
+      return
+    }
     if (!editor) {
       editorGeneration++
-      generation++
       activeRepo = undefined
-      currentSummary = undefined
-      statusBar.hide()
-      updateView()
+      clearWatchers()
+      clearState('Open a Git file to compare its branch.')
       return
     }
     const request = ++editorGeneration
     generation++
+    activeRepo = undefined
+    currentSummary = undefined
+    clearWatchers()
+    statusBar.hide()
+    updateView('Resolving the active Git repository.')
     const repo = await repositories.forUri(editor.document.uri)
-    if (request !== editorGeneration) return
+    if (request !== editorGeneration || !enabled()) return
     activeRepo = repo
-    if (!repo) { generation++; statusBar.hide(); currentSummary = undefined; updateView(); return }
+    if (!repo) {
+      clearWatchers()
+      clearState('This file is not inside a Git repository.')
+      return
+    }
     statusBar.show()
     await installWatchers(repo)
-    if (request === editorGeneration) await refresh()
+    if (request === editorGeneration && enabled()) await refresh()
   }
   const onActiveEditor = vscode.window.onDidChangeActiveTextEditor((editor) => { void handleActiveEditor(editor) })
   const onConfiguration = vscode.workspace.onDidChangeConfiguration((event) => {
-    if (event.affectsConfiguration('gitpeek.baseBranch')) void refresh()
+    if (event.affectsConfiguration('gitpeek.enabled')) {
+      if (enabled()) void handleActiveEditor(vscode.window.activeTextEditor)
+      else {
+        editorGeneration++
+        activeRepo = undefined
+        clearWatchers()
+        clearState('GitPeek Branch Compare is disabled. Enable gitpeek.enabled to use it.')
+      }
+    } else if (event.affectsConfiguration('gitpeek.baseBranch') && enabled()) void refresh()
   })
   context.subscriptions.push(onActiveEditor, onConfiguration,
     vscode.commands.registerCommand('gitpeek.compareWithBase', () => show()),
@@ -265,8 +347,7 @@ export function registerBranchCompare(
     vscode.commands.registerCommand('gitpeek.internal.branch.openDiff', (summary: BranchCompareSummary, file: FileChange) => openDiff(summary, file)),
   )
 
-  const initialEditor = vscode.window.activeTextEditor
-  if (initialEditor) void handleActiveEditor(initialEditor)
+  void handleActiveEditor(vscode.window.activeTextEditor)
 
   return {
     show,

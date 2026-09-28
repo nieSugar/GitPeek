@@ -50,6 +50,55 @@ export function aggregateOrigins(blame: readonly BlameInfo[]): SelectionOrigin[]
   return [...groups.values()];
 }
 
+export async function loadSelectionOrigins(
+  git: GitService,
+  repo: Repository,
+  file: string,
+  range: BlameLineRange,
+): Promise<{ head?: string; origins: SelectionOrigin[] } | undefined> {
+  const head = await readHead(git, repo);
+  let origins: SelectionOrigin[];
+  if (!head) {
+    origins = [uncommittedOrigin(range.endLine - range.startLine + 1)];
+  } else {
+    try {
+      origins = aggregateOrigins(await git.blame(repo, file, range.startLine, range.endLine));
+    } catch (error) {
+      if (!isMissingPathInHead(error) || !await isPendingFile(git, repo, file)) throw error;
+      origins = [uncommittedOrigin(range.endLine - range.startLine + 1)];
+    }
+  }
+  if (await readHead(git, repo) !== head) return undefined;
+  return { head, origins };
+}
+
+async function readHead(git: GitService, repo: Repository): Promise<string | undefined> {
+  try {
+    const head = (await git.run(repo, ['rev-parse', '--verify', 'HEAD'])).trim();
+    return head || undefined;
+  } catch (error) {
+    if (isMissingHead(error)) return undefined;
+    throw error;
+  }
+}
+
+async function isPendingFile(git: GitService, repo: Repository, file: string): Promise<boolean> {
+  const status = await git.run(repo, ['status', '--porcelain=v1', '-z', '--', file]);
+  return status.split('\0').some((record) => record.startsWith('?? ') || record[0] === 'A');
+}
+
+function isMissingHead(error: unknown): boolean {
+  return error instanceof Error && /needed a single revision|unknown revision|ambiguous argument ['"]?HEAD/i.test(error.message);
+}
+
+function isMissingPathInHead(error: unknown): boolean {
+  return error instanceof Error && /no such path|path .* does not exist/i.test(error.message);
+}
+
+function uncommittedOrigin(lineCount: number): SelectionOrigin {
+  return { author: 'You', authorTime: Math.floor(Date.now() / 1000), summary: 'Uncommitted changes', lineCount, uncommitted: true };
+}
+
 export async function registerSelectionOrigins(
   context: vscode.ExtensionContext,
   git: GitService,
@@ -57,7 +106,17 @@ export async function registerSelectionOrigins(
   showCommit: (repo: Repository, hash: string) => void | Promise<void>,
 ): Promise<vscode.Disposable> {
   const vscode = await import('vscode');
+  let generation = 0;
+  const enabled = (uri?: vscode.Uri) => vscode.workspace.getConfiguration('gitpeek', uri).get<boolean>('enabled', true);
+  const configuration = vscode.workspace.onDidChangeConfiguration((event) => {
+    if (event.affectsConfiguration('gitpeek.enabled')) generation++;
+  });
   const command = vscode.commands.registerCommand('gitpeek.selectionOrigins', async () => {
+    if (!enabled()) {
+      void vscode.window.showInformationMessage('GitPeek: Enable the extension in settings to analyze selection origins.');
+      return;
+    }
+    const request = ++generation;
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
       void vscode.window.showInformationMessage('GitPeek: Select code in an open file first.');
@@ -79,7 +138,7 @@ export async function registerSelectionOrigins(
     }
 
     const version = document.version;
-    const isCurrent = () => vscode.window.activeTextEditor === editor && document.version === version && !document.isDirty
+    const isCurrent = () => request === generation && enabled(document.uri) && vscode.window.activeTextEditor === editor && document.version === version && !document.isDirty
       && editor.selection.start.line === selection.start.line && editor.selection.start.character === selection.start.character
       && editor.selection.end.line === selection.end.line && editor.selection.end.character === selection.end.character;
     const repo = await repositories.forUri(document.uri);
@@ -89,16 +148,16 @@ export async function registerSelectionOrigins(
     }
     const range = toBlameLineRange(selection.start, selection.end);
     const file = path.relative(repo.root, document.uri.fsPath).replace(/\\/g, '/');
-    let blame: BlameInfo[];
+    let result: Awaited<ReturnType<typeof loadSelectionOrigins>>;
     try {
-      blame = await git.blame(repo, file, range.startLine, range.endLine);
+      result = await loadSelectionOrigins(git, repo, file, range);
     } catch (error) {
       if (isCurrent()) void vscode.window.showErrorMessage(`GitPeek: Could not analyze selection origins: ${String(error)}`);
       return;
     }
-    if (!isCurrent()) return;
+    if (!result || !isCurrent()) return;
 
-    const origins = aggregateOrigins(blame);
+    const { head, origins } = result;
     if (!origins.length) {
       void vscode.window.showInformationMessage('GitPeek: No line origins were found for this selection.');
       return;
@@ -112,8 +171,15 @@ export async function registerSelectionOrigins(
       title: `Selection Origins · Lines ${range.startLine}–${range.endLine}`,
       placeHolder: 'Choose a commit to inspect',
     });
-    if (selected?.origin.hash && !selected.origin.uncommitted) await showCommit(repo, selected.origin.hash);
+    if (isCurrent() && selected?.origin.hash && !selected.origin.uncommitted) {
+      try {
+        if (await readHead(git, repo) === head && isCurrent()) {
+          await showCommit(repo, selected.origin.hash);
+        }
+      } catch { /* A changed or unavailable HEAD makes the selected origin stale. */ }
+    }
   });
-  context.subscriptions.push(command);
-  return command;
+  const disposable = vscode.Disposable.from(command, configuration);
+  context.subscriptions.push(disposable);
+  return disposable;
 }

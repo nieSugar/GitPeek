@@ -17,7 +17,7 @@ async function main() {
     const gitBundle = join(temp, 'git-service.cjs')
     await esbuild.build({ entryPoints: [join(__dirname, '..', 'src', 'features', 'selectionOrigins.ts')], bundle: true, platform: 'node', format: 'cjs', external: ['vscode'], outfile: featureBundle })
     await esbuild.build({ entryPoints: [join(__dirname, '..', 'src', 'git', 'GitService.ts')], bundle: true, platform: 'node', format: 'cjs', outfile: gitBundle })
-    const { aggregateOrigins, toBlameLineRange } = require(featureBundle)
+    const { aggregateOrigins, loadSelectionOrigins, toBlameLineRange } = require(featureBundle)
     const { GitService } = require(gitBundle)
 
     assert.deepEqual(toBlameLineRange({ line: 0, character: 0 }, { line: 3, character: 0 }), { startLine: 1, endLine: 3 })
@@ -64,6 +64,27 @@ async function main() {
 
     const allLines = await service.blame(repo, relativeFile, 1, 4)
     assert.equal(aggregateOrigins(allLines).find((origin) => origin.hash === fourthHash).lineCount, 1)
+
+    writeFileSync(join(repoRoot, 'new untracked.ts'), 'new one\nnew two\n', 'utf8')
+    const untracked = await loadSelectionOrigins(service, repo, 'new untracked.ts', { startLine: 1, endLine: 2 })
+    assert.equal(untracked.origins.length, 1)
+    assert.equal(untracked.origins[0].summary, 'Uncommitted changes')
+    assert.equal(untracked.origins[0].lineCount, 2)
+    assert.equal(untracked.origins[0].hash, undefined, 'untracked origins cannot target a commit')
+
+    const emptyRoot = join(temp, 'empty-repo')
+    mkdirSync(emptyRoot)
+    gitInit(emptyRoot)
+    writeFileSync(join(emptyRoot, 'empty-repo.ts'), 'line one\nline two\n', 'utf8')
+    const emptyResult = await loadSelectionOrigins(service, { root: emptyRoot, id: emptyRoot }, 'empty-repo.ts', { startLine: 1, endLine: 2 })
+    assert.equal(emptyResult.head, undefined)
+    assert.equal(emptyResult.origins[0].lineCount, 2)
+
+    const failingGit = {
+      async run() { return 'a'.repeat(40) },
+      async blame() { throw new Error('Git blame failed: permission denied') },
+    }
+    await assert.rejects(loadSelectionOrigins(failingGit, repo, relativeFile, { startLine: 1, endLine: 1 }), /permission denied/)
     console.log('Selection origins integration check passed (multi-commit, uncommitted, exclusive endpoint, Unicode path).')
   } finally {
     rmSync(temp, { recursive: true, force: true })

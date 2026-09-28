@@ -67,8 +67,18 @@ async function main() {
     document.isDirty = true;
     handlers.change({ document });
     assert.equal(rendered.at(-1)[0].renderOptions.after.contentText, 'Unsaved changes');
+    document.isDirty = false;
+    document.lineCount = 20_001;
+    handlers.change({ document });
+    await until(() => rendered.at(-1)?.[0]?.renderOptions?.after?.contentText === 'GitPeek blame disabled for large file.');
+    assert.equal(pending.length, 2, 'large files must not query blame');
+    document.lineCount = 2;
+    vscode.workspace.fs.stat = async () => ({ size: 2 * 1024 * 1024 + 1 });
+    handlers.change({ document });
+    await until(() => rendered.at(-1)?.[0]?.renderOptions?.after?.contentText === 'GitPeek blame disabled for large file.');
+    assert.equal(pending.length, 2, 'large file size must not query blame');
     controller.dispose();
-    console.log('Blame check passed (stale result discarded, dirty document guarded).');
+    console.log('Blame check passed (stale result discarded, dirty and large files guarded).');
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }

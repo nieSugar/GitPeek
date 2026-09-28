@@ -87,17 +87,52 @@ export async function registerHistory(
   const initialLimit = (uri?: vscode.Uri) => Math.max(1, vscode.workspace.getConfiguration('gitpeek.history', uri).get<number>('limit', DEFAULT_LIMIT));
   let limit = initialLimit(activeUri);
   let generation = 0;
+  const watchers = new Set<string>();
+
+  const watchRepository = async (repo: Repository): Promise<void> => {
+    if (watchers.has(repo.id)) return;
+    watchers.add(repo.id);
+    let paths: string[];
+    try {
+      paths = await Promise.all(['HEAD', 'packed-refs', 'refs/heads', 'logs/HEAD'].map(async (gitPath) =>
+        path.resolve(repo.root, (await git.run(repo, ['rev-parse', '--git-path', gitPath])).trim())));
+    } catch {
+      watchers.delete(repo.id);
+      return;
+    }
+    for (const watchedPath of paths) {
+      const headsDirectory = watchedPath.endsWith(path.join('refs', 'heads'));
+      const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(
+        vscode.Uri.file(headsDirectory ? watchedPath : path.dirname(watchedPath)),
+        headsDirectory ? '**/*' : path.basename(watchedPath),
+      ));
+      const invalidate = () => {
+        service.invalidate(repo.id);
+        generation++;
+        changed.fire(undefined);
+      };
+      watcher.onDidChange(invalidate);
+      watcher.onDidCreate(invalidate);
+      watcher.onDidDelete(invalidate);
+      context.subscriptions.push(watcher);
+    }
+  };
 
   const provider: vscode.TreeDataProvider<HistoryItem> = {
     onDidChangeTreeData,
     getTreeItem: (item) => item,
     getChildren: async () => {
       const uri = activeUri;
+      if (!vscode.workspace.getConfiguration('gitpeek', uri).get<boolean>('enabled', true)) {
+        return [message(vscode, 'GitPeek is disabled in settings.')];
+      }
       if (!uri || uri.scheme !== 'file') return [message(vscode, 'Open a file to view its history.')];
       const currentGeneration = generation;
       const repo = await repositories.forUri(uri);
       if (currentGeneration !== generation) return [];
       if (!repo) return [message(vscode, 'This file is not inside a Git repository.')];
+      await watchRepository(repo);
+      if (currentGeneration !== generation) return [];
 
       const file = relativeHistoryPath(repo.root, uri.fsPath);
       try {
@@ -116,6 +151,10 @@ export async function registerHistory(
   };
 
   const show = async (uri: vscode.Uri): Promise<void> => {
+    if (!vscode.workspace.getConfiguration('gitpeek', uri).get<boolean>('enabled', true)) {
+      await vscode.window.showInformationMessage('GitPeek: Enable the extension in settings to view file history.');
+      return;
+    }
     activeUri = uri;
     limit = initialLimit(uri);
     generation++;
@@ -142,13 +181,27 @@ export async function registerHistory(
         changed.fire(undefined);
       }
     }),
+    vscode.workspace.onDidSaveTextDocument((document) => {
+      if (document.uri.toString() !== activeUri?.toString()) return;
+      generation++;
+      changed.fire(undefined);
+    }),
     vscode.workspace.onDidChangeConfiguration((event) => {
-      if (!event.affectsConfiguration('gitpeek.history.limit')) return;
-      limit = initialLimit(activeUri);
-      refresh();
+      if (event.affectsConfiguration('gitpeek.enabled')) {
+        generation++;
+        changed.fire(undefined);
+      }
+      if (event.affectsConfiguration('gitpeek.history.limit')) {
+        limit = initialLimit(activeUri);
+        refresh();
+      }
     }),
     vscode.commands.registerCommand('gitpeek.fileHistory', async () => {
       const uri = vscode.window.activeTextEditor?.document.uri;
+      if (!vscode.workspace.getConfiguration('gitpeek', uri).get<boolean>('enabled', true)) {
+        await vscode.window.showInformationMessage('GitPeek: Enable the extension in settings to view file history.');
+        return;
+      }
       if (!uri) {
         void vscode.window.showInformationMessage('GitPeek: Open a file to view its history.');
         return;
@@ -156,6 +209,7 @@ export async function registerHistory(
       await show(uri);
     }),
     vscode.commands.registerCommand('gitpeek.internal.fileHistory.loadMore', () => {
+      if (!activeUri || !vscode.workspace.getConfiguration('gitpeek', activeUri).get<boolean>('enabled', true)) return;
       limit += PAGE_SIZE;
       generation++;
       changed.fire(undefined);
