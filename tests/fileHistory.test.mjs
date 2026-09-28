@@ -1,6 +1,22 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { FileHistoryService, relativeHistoryPath } from '../src/features/history.ts';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { createRequire } from 'node:module';
+import Module from 'node:module';
+import { build } from 'esbuild';
+
+const temp = mkdtempSync(path.join(tmpdir(), 'gitpeek-history-'));
+const outfile = path.join(temp, 'history.cjs');
+await build({ entryPoints: [path.join(import.meta.dirname, '..', 'src', 'features', 'history.ts')], bundle: true, platform: 'node', format: 'cjs', external: ['vscode'], outfile });
+const originalLoad = Module._load;
+Module._load = function (request, parent, isMain) {
+  if (request === 'vscode') return {};
+  return originalLoad.call(this, request, parent, isMain);
+};
+const { FileHistoryService, relativeHistoryPath } = createRequire(import.meta.url)(outfile);
+Module._load = originalLoad;
+rmSync(temp, { recursive: true, force: true });
 
 const repo = { id: 'repo-1', root: path.resolve('历史 工作区') };
 const file = relativeHistoryPath(repo.root, path.join(repo.root, '中文 目录', 'a & b;[x].ts'));

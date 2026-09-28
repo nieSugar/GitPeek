@@ -3,6 +3,7 @@ import { basename, dirname, resolve } from 'node:path'
 import type { GitService } from '../git/GitService'
 import type { RepositoryService } from '../git/RepositoryService'
 import type { BranchComparison, FileChange, Repository } from '../git/types'
+import { isGitPeekEditor } from './virtualEditor'
 
 const CONTENT_SCHEME = 'gitpeek-branch'
 const FALLBACK_BASES = ['main', 'master', 'develop']
@@ -98,7 +99,7 @@ class BranchContentProvider implements vscode.TextDocumentContentProvider {
 
   uri(repo: Repository, ref: string, file: string, empty = false, binary = false): vscode.Uri {
     const query: ContentRef = { repoId: repo.id, root: repo.root, ref, file, ...(empty ? { empty: true } : {}), ...(binary ? { binary: true } : {}) }
-    return vscode.Uri.from({ scheme: CONTENT_SCHEME, path: `/${encodeURIComponent(repo.id)}/${encodeURIComponent(file)}`, query: JSON.stringify(query) })
+    return vscode.Uri.from({ scheme: CONTENT_SCHEME, path: `/${file}`, query: JSON.stringify(query) })
   }
 
   cache(uri: vscode.Uri, contents: string): void {
@@ -295,6 +296,7 @@ export function registerBranchCompare(
   }
 
   const handleActiveEditor = async (editor: vscode.TextEditor | undefined): Promise<void> => {
+    if (isGitPeekEditor(editor)) return
     if (!enabled()) {
       editorGeneration++
       activeRepo = undefined

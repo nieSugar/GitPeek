@@ -18,7 +18,7 @@ class GitContentProvider implements vscode.TextDocumentContentProvider {
 
   uri(repo: Repository, ref: string, file: string, side: 'before' | 'after', empty: boolean, binary: boolean): vscode.Uri {
     const contentRef: ContentRef = { repoId: repo.id, root: repo.root, ref, file, side, ...(empty ? { empty: true } : {}), ...(binary ? { binary: true } : {}) };
-    return vscode.Uri.from({ scheme: CONTENT_SCHEME, path: `/${encodeURIComponent(repo.id)}/${encodeURIComponent(file)}`, query: JSON.stringify(contentRef) });
+    return vscode.Uri.from({ scheme: CONTENT_SCHEME, path: `/${file}`, query: JSON.stringify(contentRef) });
   }
 
   cache(uri: vscode.Uri, content: string): void {

@@ -63,7 +63,7 @@ async function main() {
     assert.deepEqual(comparison.commits.map((commit) => commit.subject), ['feature change'])
     assert.notEqual(git(repoRoot, 'merge-base', 'main', 'HEAD'), baseTip)
     assert.match(git(repoRoot, 'diff', '--name-only', 'main', 'HEAD'), /base-only\.txt/)
-    await assert.rejects(resolveBaseBranch(gitService, repo, 'missing-base'), /does not exist/)
+    await assert.rejects(resolveBaseBranch(gitService, repo, 'missing-base'), /不存在/)
 
     git(repoRoot, 'checkout', '--orphan', 'unrelated')
     writeFileSync(join(repoRoot, 'unrelated.txt'), 'no shared history\n', 'utf8')

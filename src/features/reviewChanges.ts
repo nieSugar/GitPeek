@@ -4,6 +4,7 @@ import type { GitService } from '../git/GitService';
 import type { RepositoryService } from '../git/RepositoryService';
 import type { Repository } from '../git/types';
 import { loadReviewDiff, loadReviewSnapshot, type ReviewFile, type ReviewSection, type ReviewSnapshot } from './reviewChangesData';
+import { isGitPeekEditor } from './virtualEditor';
 
 const SHOW_DIFF = 'gitpeek.internal.reviewChanges.showDiff';
 type SectionNode = { kind: 'section'; snapshot: ReviewSnapshot; section: ReviewSection };
@@ -129,6 +130,7 @@ export async function registerReviewChanges(
   const refreshActiveEditor = async (): Promise<void> => {
     if (!enabled()) { clearDisabled(); return; }
     const uri = vscode.window.activeTextEditor?.document.uri;
+    if (isGitPeekEditor(vscode.window.activeTextEditor)) return;
     if (!uri || uri.scheme !== 'file') {
       refreshGeneration++;
       currentRepo = undefined;
@@ -226,7 +228,7 @@ export async function registerReviewChanges(
   function reviewUri(repo: Repository, revision: string, section: ReviewSection, file: string, side: 'before' | 'after'): vscode.Uri {
     return vscode.Uri.from({
       scheme: 'gitpeek-review',
-      path: `/${encodeURIComponent(repo.id)}/${encodeURIComponent(file)}`,
+      path: `/${file}`,
       query: JSON.stringify({ repoId: repo.id, root: repo.root, revision, section, file, side }),
     });
   }

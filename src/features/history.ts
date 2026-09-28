@@ -3,6 +3,7 @@ import type * as vscode from 'vscode';
 import type { GitService } from '../git/GitService';
 import type { RepositoryService } from '../git/RepositoryService';
 import type { CommitInfo, Repository } from '../git/types';
+import { isGitPeekEditor } from './virtualEditor';
 
 const DEFAULT_LIMIT = 20;
 const PAGE_SIZE = 20;
@@ -170,6 +171,7 @@ export async function registerHistory(
   context.subscriptions.push(
     changed,
     vscode.window.onDidChangeActiveTextEditor((editor) => {
+      if (isGitPeekEditor(editor)) return;
       activeUri = editor?.document.uri;
       limit = initialLimit(activeUri);
       generation++;
