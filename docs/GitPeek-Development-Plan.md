@@ -3,7 +3,7 @@
 - 创建日期：2026-09-28。
 - 需求基准：[GitPeek MVP 规格说明](./GitPeek-MVP-Spec.md)。
 - 目标：交付可日常使用的轻量、Context-first VS Code Git 插件。
-- 当前状态：仅记录需求与计划，开发尚未开始；所有任务均为待办。
+- 当前状态：开发进行中；按阶段记录实现和验证结果。
 - 更新方式：完成实现并通过相应验收后再勾选任务，记录必要的验证结果和未验证边界。
 
 ## 范围与执行原则
@@ -19,13 +19,15 @@
 
 ## 阶段 0：工程初始化
 
-- [ ] 初始化 Git 仓库，建立 TypeScript、esbuild、VS Code Extension 基础工程。
-- [ ] 配置编译、类型检查、调试和本地 VSIX 打包命令。
-- [ ] 添加最小扩展入口、GitPeek 图标、Output 日志通道。
-- [ ] 确定最低支持的 VS Code 版本，配置对应类型与运行环境。
+- [x] 初始化 Git 仓库，建立 TypeScript、esbuild、VS Code Extension 基础工程。
+- [x] 配置编译、类型检查、调试和本地 VSIX 打包命令。
+- [x] 添加最小扩展入口、GitPeek 图标、Output 日志通道。
+- [x] 确定最低支持的 VS Code 版本，配置对应类型与运行环境。
 - [ ] 提前验证：能通过内置 Git 扩展定位指定仓库的 SCM Commit 输入框。
 
 **验收条件**：在 Extension Development Host 中成功加载扩展，能够调试、查看日志和完成本地打包。
+
+**执行记录**：`npm install`、`npm run check`、`npm run build`、`npm run package` 通过；VS Code 最低版本为 1.96。Extension Development Host 和 SCM 输入框的实际运行验证待完成。
 
 ## 阶段 1：GitService 与仓库上下文
 

@@ -1,0 +1,156 @@
+{
+  "name": "gitpeek",
+  "displayName": "GitPeek",
+  "description": "A lightweight, context-first Git extension for VS Code.",
+  "version": "0.1.0",
+  "publisher": "gitpeek",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Other",
+    "SCM Providers"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "icon": "resources/gitpeek.png",
+  "scripts": {
+    "compile": "node esbuild.js",
+    "build": "npm run compile",
+    "watch": "node esbuild.js --watch",
+    "check": "tsc --noEmit",
+    "package": "npm run check && npm run compile && vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/vscode": "1.96.0",
+    "@vscode/vsce": "^3.2.2",
+    "esbuild": "^0.24.2",
+    "typescript": "^5.7.2"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "gitpeek.fileHistory",
+        "title": "GitPeek: File History"
+      },
+      {
+        "command": "gitpeek.blameCurrentLine",
+        "title": "GitPeek: Blame Current Line"
+      },
+      {
+        "command": "gitpeek.selectionOrigins",
+        "title": "GitPeek: Selection Origins"
+      },
+      {
+        "command": "gitpeek.compareWithBase",
+        "title": "GitPeek: Compare with Base"
+      },
+      {
+        "command": "gitpeek.showBranchChanges",
+        "title": "GitPeek: Show Branch Changes"
+      },
+      {
+        "command": "gitpeek.reviewChanges",
+        "title": "GitPeek: Review Changes"
+      },
+      {
+        "command": "gitpeek.generateCommitMessage",
+        "title": "GitPeek: Generate Commit Message"
+      },
+      {
+        "command": "gitpeek.refresh",
+        "title": "GitPeek: Refresh"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "gitpeek",
+          "title": "GitPeek",
+          "icon": "resources/gitpeek.svg"
+        }
+      ]
+    },
+    "views": {
+      "gitpeek": [
+        {
+          "id": "gitpeek.repository",
+          "name": "Repository"
+        },
+        {
+          "id": "gitpeek.changes",
+          "name": "Changes"
+        },
+        {
+          "id": "gitpeek.branchChanges",
+          "name": "Branch Changes"
+        },
+        {
+          "id": "gitpeek.fileHistory",
+          "name": "File History"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "GitPeek",
+      "properties": {
+        "gitpeek.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable GitPeek."
+        },
+        "gitpeek.blame.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable current-line blame."
+        },
+        "gitpeek.blame.delay": {
+          "type": "number",
+          "default": 300,
+          "minimum": 0,
+          "description": "Delay before resolving current-line blame, in milliseconds."
+        },
+        "gitpeek.history.limit": {
+          "type": "number",
+          "default": 20,
+          "minimum": 1,
+          "description": "Number of file history entries to load initially."
+        },
+        "gitpeek.baseBranch": {
+          "type": "string",
+          "default": "auto",
+          "description": "Base branch used for comparisons, or auto."
+        },
+        "gitpeek.commit.conventional": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use Conventional Commit format for suggestions."
+        },
+        "gitpeek.commit.defaultType": {
+          "type": "string",
+          "default": "chore",
+          "enum": [
+            "feat",
+            "fix",
+            "refactor",
+            "perf",
+            "docs",
+            "test",
+            "style",
+            "chore"
+          ],
+          "description": "Default Conventional Commit type."
+        }
+      }
+    }
+  },
+  "files": [
+    "dist/**",
+    "resources/**",
+    "package.json"
+  ]
+}
