@@ -87,15 +87,17 @@
 
 ## 阶段 5：Branch vs Base
 
-- [ ] 实现 `gitpeek.baseBranch`，支持自动识别和手动指定。
-- [ ] 自动识别按 `origin/HEAD → main → master → develop`，保留实际可解析的引用。
-- [ ] 处理本地 Base 不存在、配置无效和无共同祖先的情况。
-- [ ] 展示当前分支、ahead／behind、分支提交和变更文件统计；`base...HEAD` 计数左侧为 behind、右侧为 ahead。
-- [ ] 文件清单、统计与文件 Diff 使用一致的三点比较基点：`merge-base(base, HEAD) → HEAD`。
-- [ ] 添加 Compare with Base 编辑器按钮及 Branch 状态栏入口。
-- [ ] 切换分支、外部提交和 Refresh 后更新相关数据。
+- [x] 实现 `gitpeek.baseBranch`，支持自动识别和手动指定。
+- [x] 自动识别按 `origin/HEAD → main → master → develop`，保留实际可解析的引用。
+- [x] 处理本地 Base 不存在、配置无效和无共同祖先的情况。
+- [x] 展示当前分支、ahead／behind、分支提交和变更文件统计；`base...HEAD` 计数左侧为 behind、右侧为 ahead。
+- [x] 文件清单、统计与文件 Diff 使用一致的三点比较基点：`merge-base(base, HEAD) → HEAD`。
+- [x] 添加 Compare with Base 编辑器按钮及 Branch 状态栏入口。
+- [x] 切换分支、外部提交和 Refresh 后更新相关数据。
 
 **验收条件**：Base 与当前分支各自有新提交时，计数、文件清单和打开的 Diff 仍保持一致。
+
+**执行记录**：真实分叉仓库检查通过 ahead／behind、共同祖先文件集、自动与无效 Base、无共同祖先；`npm run check`、`npm run build` 通过。VS Code 交互待阶段 9 验证。
 
 ## 阶段 6：Selection Origins
 

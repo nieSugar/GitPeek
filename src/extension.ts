@@ -6,6 +6,7 @@ import { BlameController } from './features/blame';
 import { registerHistory } from './features/history';
 import { registerSidebar } from './features/sidebar';
 import { registerCommitFeatures } from './features/commitDetail';
+import { registerBranchCompare } from './features/branchCompare';
 
 type GitRepository = {
   rootUri: vscode.Uri;
@@ -32,10 +33,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(blame);
   const history = await registerHistory(context, git, repositories, commits.showCommit);
   const sidebar = registerSidebar(context, history);
+  const branch = registerBranchCompare(context, git, repositories, commits.showCommit);
+  const updateBranchViews = () => {
+    sidebar.setBranchChangesItems(branch.items);
+    const summary = branch.summary;
+    sidebar.setRepositoryItems(summary ? [
+      new vscode.TreeItem(path.basename(summary.repo.root)),
+      new vscode.TreeItem(summary.branch),
+      new vscode.TreeItem(`vs ${summary.base} · ↑${summary.ahead} ↓${summary.behind}`),
+    ] : []);
+  };
+  context.subscriptions.push(branch.onDidChange(updateBranchViews));
+  updateBranchViews();
   const refresh = vscode.commands.registerCommand('gitpeek.refresh', () => {
     repositories.clearCache();
     blame.refresh();
     sidebar.refresh();
+    void branch.refresh();
     output.appendLine(`[${new Date().toISOString()}] Refresh requested`);
   });
   context.subscriptions.push(refresh);
