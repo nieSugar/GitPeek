@@ -6,6 +6,7 @@ import type { Repository } from '../git/types';
 import { listStashes, previewStash, type StashEntry } from './stashList';
 import { saveStash } from './stashSave';
 import { applyStash } from './stashApply';
+import { dropStash } from './stashDrop';
 
 export function registerStashFeatures(context: vscode.ExtensionContext, git: GitService, repositories: RepositoryService): void {
   const pickRepo = async (): Promise<Repository | undefined> => {
@@ -52,9 +53,22 @@ export function registerStashFeatures(context: vscode.ExtensionContext, git: Git
     const selected = await vscode.window.showQuickPick([
       { label: '预览改动', action: 'preview' },
       { label: '应用 Stash', action: 'apply' },
+      { label: '删除 Stash', action: 'drop' },
     ], { title: `GitPeek：${entry.ref} · ${entry.subject}`, placeHolder: '选择操作' });
     if (selected?.action === 'preview') await showPreview(repo, entry);
     else if (selected?.action === 'apply') await apply(repo, entry);
+    else if (selected?.action === 'drop') await drop(repo, entry);
+  };
+
+  const drop = async (repo: Repository, entry: StashEntry): Promise<void> => {
+    const confirmed = await vscode.window.showWarningMessage(
+      `永久删除 ${basename(repo.root)} 的 ${entry.ref} “${entry.subject}”（${entry.oid.slice(0, 7)}）？`,
+      { modal: true }, '删除',
+    );
+    if (confirmed !== '删除') return;
+    await dropStash(git, repo, entry);
+    await vscode.commands.executeCommand('gitpeek.refresh');
+    await vscode.window.showInformationMessage('GitPeek：所选 Stash 已删除。');
   };
 
   const apply = async (repo: Repository, entry: StashEntry): Promise<void> => {

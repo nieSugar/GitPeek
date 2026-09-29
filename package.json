@@ -25,7 +25,7 @@
     "build": "npm run compile",
     "watch": "node esbuild.js --watch",
     "check": "tsc --noEmit",
-    "test": "node --test tests/git-service.integration.cjs tests/blame.test.cjs tests/virtualEditor.test.cjs tests/fileHistory.test.mjs tests/commitGraph.integration.cjs tests/commitGraphView.test.cjs tests/checkoutCommit.integration.cjs tests/cherryPickCommit.integration.cjs tests/stashList.integration.cjs tests/stashSave.integration.cjs tests/stashApply.integration.cjs tests/commit-detail.integration.cjs tests/branchCompare.integration.cjs tests/selectionOrigins.integration.cjs tests/reviewChanges.integration.cjs tests/smartCommit.test.mjs",
+    "test": "node --test tests/git-service.integration.cjs tests/blame.test.cjs tests/virtualEditor.test.cjs tests/fileHistory.test.mjs tests/commitGraph.integration.cjs tests/commitGraphView.test.cjs tests/checkoutCommit.integration.cjs tests/cherryPickCommit.integration.cjs tests/stashList.integration.cjs tests/stashSave.integration.cjs tests/stashApply.integration.cjs tests/stashDrop.integration.cjs tests/commit-detail.integration.cjs tests/branchCompare.integration.cjs tests/selectionOrigins.integration.cjs tests/reviewChanges.integration.cjs tests/smartCommit.test.mjs",
     "package": "npm run check && npm run compile && vsce package --no-dependencies"
   },
   "devDependencies": {
