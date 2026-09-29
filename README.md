@@ -69,11 +69,11 @@ npm run package
 在 VS Code 中安装生成的 VSIX：
 
 ```sh
-code --install-extension gitpeek-0.3.0.vsix
+code --install-extension gitpeek-0.4.0.vsix
 ```
 
 也可以在 VS Code 中运行 **扩展：从 VSIX 安装...**，然后选择生成的文件。
 
 ## 范围与限制
 
-GitPeek 0.3.0 增加提交级操作。Pull Request 集成、AI 聊天、暂存管理及交互式 rebase 仍不在范围内。智能提交仅根据已暂存文件的路径和状态提供措辞建议，提交前请检查生成的信息。二进制差异仅显示元数据，不显示文件内容。
+GitPeek 0.4.0 增加 Stash Lite。Pull Request 集成、AI 聊天、文件 Stage/Unstage 管理及交互式 rebase 仍不在范围内。智能提交仅根据已暂存文件的路径和状态提供措辞建议，提交前请检查生成的信息。二进制差异仅显示元数据，不显示文件内容。
