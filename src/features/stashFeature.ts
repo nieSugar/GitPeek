@@ -5,6 +5,7 @@ import type { RepositoryService } from '../git/RepositoryService';
 import type { Repository } from '../git/types';
 import { listStashes, previewStash, type StashEntry } from './stashList';
 import { saveStash } from './stashSave';
+import { applyStash } from './stashApply';
 
 export function registerStashFeatures(context: vscode.ExtensionContext, git: GitService, repositories: RepositoryService): void {
   const pickRepo = async (): Promise<Repository | undefined> => {
@@ -40,11 +41,38 @@ export function registerStashFeatures(context: vscode.ExtensionContext, git: Git
         matchOnDescription: true,
       });
       if (!selected) return;
-      if ('entry' in selected) await showPreview(repo, selected.entry);
+      if ('entry' in selected) await showEntryActions(repo, selected.entry);
       else await save(repo);
     } catch (error) {
       await vscode.window.showErrorMessage(`GitPeek：Stash 操作失败：${errorText(error)}`);
     }
+  };
+
+  const showEntryActions = async (repo: Repository, entry: StashEntry): Promise<void> => {
+    const selected = await vscode.window.showQuickPick([
+      { label: '预览改动', action: 'preview' },
+      { label: '应用 Stash', action: 'apply' },
+    ], { title: `GitPeek：${entry.ref} · ${entry.subject}`, placeHolder: '选择操作' });
+    if (selected?.action === 'preview') await showPreview(repo, entry);
+    else if (selected?.action === 'apply') await apply(repo, entry);
+  };
+
+  const apply = async (repo: Repository, entry: StashEntry): Promise<void> => {
+    const confirmed = await vscode.window.showWarningMessage(
+      `将 ${entry.ref} “${entry.subject}”应用到 ${basename(repo.root)}？工作区必须干净，原 Stash 会保留。`,
+      { modal: true }, '应用',
+    );
+    if (confirmed !== '应用') return;
+    try {
+      await applyStash(git, repo, entry);
+    } catch (error) {
+      await vscode.commands.executeCommand('gitpeek.refresh');
+      const conflicts = await git.run(repo, ['ls-files', '-u']).catch(() => '');
+      if (conflicts) throw new Error(`应用发生冲突，原 Stash 已保留。请在源代码管理中解决冲突。Git 错误：${errorText(error)}`);
+      throw error;
+    }
+    await vscode.commands.executeCommand('gitpeek.refresh');
+    await vscode.window.showInformationMessage('GitPeek：Stash 已应用，原记录仍保留。');
   };
 
   const save = async (repo: Repository): Promise<void> => {
