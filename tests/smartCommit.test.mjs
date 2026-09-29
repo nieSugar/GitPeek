@@ -55,11 +55,11 @@ const hostVscode = {
   workspace: { workspaceFolders: [{ uri: { fsPath: 'C:/workspace' } }] },
 };
 const PUBLIC_COMMANDS = [
-  'gitpeek.fileHistory', 'gitpeek.showCommitGraph', 'gitpeek.blameCurrentLine', 'gitpeek.selectionOrigins', 'gitpeek.compareWithBase',
+  'gitpeek.fileHistory', 'gitpeek.showCommitGraph', 'gitpeek.stash', 'gitpeek.blameCurrentLine', 'gitpeek.selectionOrigins', 'gitpeek.compareWithBase',
   'gitpeek.showBranchChanges', 'gitpeek.reviewChanges', 'gitpeek.generateCommitMessage', 'gitpeek.refresh',
 ];
 const hostResult = await runHostProbe({ vscode: hostVscode });
-assert.equal(hostResult.publicCommands, 9);
+assert.equal(hostResult.publicCommands, 10);
 assert.equal(hostResult.repositories[0].root, repository.rootUri.fsPath);
 assert.equal(scmInput.value, 'keep this draft', 'the host probe must not change the SCM draft');
 await assert.rejects(runHostProbe({

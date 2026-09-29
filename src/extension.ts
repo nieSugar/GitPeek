@@ -11,6 +11,7 @@ import { registerBranchCompare } from './features/branchCompare';
 import { registerSelectionOrigins } from './features/selectionOrigins';
 import { registerReviewChanges } from './features/reviewChanges';
 import { generateCommitMessage } from './features/smartCommit';
+import { registerStashFeatures } from './features/stashFeature';
 
 const output = vscode.window.createOutputChannel('GitPeek');
 
@@ -18,6 +19,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(output);
   const git = new GitService((message) => output.appendLine(message));
   const repositories = new RepositoryService(git);
+  registerStashFeatures(context, git, repositories);
   const commits = registerCommitFeatures(context, git);
   const graph = registerCommitGraph(context, git, repositories, commits.showCommit);
   const blame = new BlameController(git, repositories, commits);

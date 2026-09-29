@@ -4,6 +4,7 @@ const path = require('node:path');
 const PUBLIC_COMMANDS = [
   'gitpeek.fileHistory',
   'gitpeek.showCommitGraph',
+  'gitpeek.stash',
   'gitpeek.blameCurrentLine',
   'gitpeek.selectionOrigins',
   'gitpeek.compareWithBase',
