@@ -3,6 +3,7 @@ const path = require('node:path');
 
 const PUBLIC_COMMANDS = [
   'gitpeek.fileHistory',
+  'gitpeek.showCommitGraph',
   'gitpeek.blameCurrentLine',
   'gitpeek.selectionOrigins',
   'gitpeek.compareWithBase',
@@ -59,6 +60,13 @@ module.exports.run = async function run(options = {}) {
       if (repository.inputBox.value !== marker) throw new Error(`SCM inputBox write failed for ${repository.rootUri.fsPath}`);
     } finally {
       repository.inputBox.value = original;
+    }
+  }
+  if (workspaceRoots.length === 1 && vscode.TabInputWebview) {
+    await vscode.commands.executeCommand('gitpeek.showCommitGraph');
+    const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+    if (!(input instanceof vscode.TabInputWebview) || input.viewType !== 'gitpeek.commitGraph') {
+      throw new Error('GitPeek Commit Graph did not open in an editor tab.');
     }
   }
 

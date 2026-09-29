@@ -10,6 +10,7 @@ async function main() {
   const vscode = {
     TabInputText: class { constructor(uri) { this.uri = uri; } },
     TabInputTextDiff: class { constructor(original, modified) { this.original = original; this.modified = modified; } },
+    TabInputWebview: class { constructor(viewType) { this.viewType = viewType; } },
     window: { tabGroups: { activeTabGroup: { activeTab: undefined } } },
   };
   const originalLoad = Module._load;
@@ -31,6 +32,10 @@ async function main() {
     assert.equal(isGitPeekEditor(undefined), false);
     tab(new vscode.TabInputText(uri('gitpeek-branch')));
     assert.equal(isGitPeekEditor(undefined), true);
+    tab(new vscode.TabInputWebview('gitpeek.commitGraph'));
+    assert.equal(isGitPeekEditor(undefined), true, 'graph tab preserves repository context');
+    tab(new vscode.TabInputWebview('unrelated.view'));
+    assert.equal(isGitPeekEditor(undefined), false);
     vscode.window.tabGroups.activeTabGroup.activeTab = undefined;
     assert.equal(isGitPeekEditor(undefined), false, 'closing the last editor clears context');
     console.log('Virtual editor transition check passed.');

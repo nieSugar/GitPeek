@@ -2,7 +2,7 @@
   "name": "gitpeek",
   "displayName": "GitPeek",
   "description": "面向代码上下文的轻量级 VS Code Git 扩展。",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "gitpeek",
   "repository": {
     "type": "git",
@@ -25,7 +25,7 @@
     "build": "npm run compile",
     "watch": "node esbuild.js --watch",
     "check": "tsc --noEmit",
-    "test": "node --test tests/git-service.integration.cjs tests/blame.test.cjs tests/virtualEditor.test.cjs tests/fileHistory.test.mjs tests/commit-detail.integration.cjs tests/branchCompare.integration.cjs tests/selectionOrigins.integration.cjs tests/reviewChanges.integration.cjs tests/smartCommit.test.mjs",
+    "test": "node --test tests/git-service.integration.cjs tests/blame.test.cjs tests/virtualEditor.test.cjs tests/fileHistory.test.mjs tests/commitGraph.integration.cjs tests/commitGraphView.test.cjs tests/commit-detail.integration.cjs tests/branchCompare.integration.cjs tests/selectionOrigins.integration.cjs tests/reviewChanges.integration.cjs tests/smartCommit.test.mjs",
     "package": "npm run check && npm run compile && vsce package --no-dependencies"
   },
   "devDependencies": {
@@ -40,6 +40,11 @@
       {
         "command": "gitpeek.fileHistory",
         "title": "GitPeek: 文件历史"
+      },
+      {
+        "command": "gitpeek.showCommitGraph",
+        "title": "GitPeek: 提交图",
+        "icon": "$(git-branch)"
       },
       {
         "command": "gitpeek.blameCurrentLine",
@@ -100,6 +105,13 @@
       ]
     },
     "menus": {
+      "view/title": [
+        {
+          "command": "gitpeek.showCommitGraph",
+          "when": "view == gitpeek.repository",
+          "group": "navigation@1"
+        }
+      ],
       "editor/title": [
         {
           "command": "gitpeek.fileHistory",

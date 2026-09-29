@@ -6,6 +6,7 @@ import { BlameController } from './features/blame';
 import { registerHistory } from './features/history';
 import { registerSidebar } from './features/sidebar';
 import { registerCommitFeatures } from './features/commitDetail';
+import { registerCommitGraph } from './features/commitGraph';
 import { registerBranchCompare } from './features/branchCompare';
 import { registerSelectionOrigins } from './features/selectionOrigins';
 import { registerReviewChanges } from './features/reviewChanges';
@@ -18,6 +19,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const git = new GitService((message) => output.appendLine(message));
   const repositories = new RepositoryService(git);
   const commits = registerCommitFeatures(context, git);
+  const graph = registerCommitGraph(context, git, repositories, commits.showCommit);
   const blame = new BlameController(git, repositories, commits);
   context.subscriptions.push(blame);
   const history = await registerHistory(context, git, repositories, commits.showCommit);
@@ -42,6 +44,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     sidebar.refresh();
     void branch.refresh();
     void review.refresh().catch(() => undefined);
+    void graph.refresh();
     output.appendLine(`[${new Date().toISOString()}] 已请求刷新`);
   });
   context.subscriptions.push(refresh);
