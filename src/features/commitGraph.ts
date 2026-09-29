@@ -230,18 +230,96 @@ export function graphHtml(): string {
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https://avatars.githubusercontent.com; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'">
 <meta name="viewport" content="width=device-width, initial-scale=1"><style nonce="${nonce}">
-body{margin:0;color:var(--vscode-editor-foreground);background:var(--vscode-editor-background);font:13px var(--vscode-font-family);}
-header{position:sticky;top:0;z-index:2;padding:12px 16px;background:var(--vscode-editor-background);border-bottom:1px solid var(--vscode-panel-border);}
-.top{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.top strong{font-size:16px}#branch{color:var(--vscode-descriptionForeground)}
-.actions{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}button{cursor:pointer;font:inherit} .actions button,#more{color:var(--vscode-button-foreground);background:var(--vscode-button-background);border:0;border-radius:3px;padding:5px 9px}.actions button:hover,#more:hover{background:var(--vscode-button-hoverBackground)}.actions button[hidden]{display:none}
-#status{padding:8px 16px;color:var(--vscode-descriptionForeground)}#rows{overflow:auto}.row{display:flex;align-items:center;width:100%;min-height:30px;box-sizing:border-box;padding:2px 16px;border-bottom:1px solid var(--vscode-panel-border);gap:8px}.commit{min-width:0;flex:1;display:flex;align-items:center;gap:8px;padding:0;border:0;background:transparent;color:inherit;text-align:left;font:inherit}.commit:hover,.commit:focus-visible{background:var(--vscode-list-hoverBackground);outline:1px solid var(--vscode-focusBorder)}.row-action{flex:none;border:0;border-radius:3px;padding:4px 8px;background:transparent;color:inherit}.row-action:hover,.row-action:focus-visible{background:var(--vscode-toolbar-hoverBackground);outline:1px solid var(--vscode-focusBorder)}
-.graph{flex:none;white-space:pre;font:16px/24px monospace}.avatar{flex:none;position:relative;display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);font-size:11px;font-weight:bold;overflow:hidden}.avatar img{position:absolute;width:100%;height:100%;object-fit:cover}.subject{min-width:120px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.meta{color:var(--vscode-descriptionForeground);white-space:nowrap}.ref{padding:1px 5px;border-radius:8px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);white-space:nowrap}.connector{min-height:15px;height:15px;border:0;padding-top:0;padding-bottom:0}.connector .graph{line-height:15px}#more{margin:12px 16px}#more[hidden]{display:none}
-</style></head><body><header><div class="top"><strong>提交图</strong><span id="branch"></span></div><div class="actions"><button data-action="switch">切换分支</button><button data-action="create">新建分支</button><button data-action="merge">合并分支</button><button data-action="cherryContinue" hidden>继续 Cherry-pick</button><button data-action="cherryAbort" hidden>中止 Cherry-pick</button><button data-action="refresh">刷新</button></div></header><div id="status">正在加载…</div><main id="rows" aria-label="提交历史"></main><button id="more" data-action="loadMore" hidden>加载更多</button>
+*{box-sizing:border-box}body{display:flex;flex-direction:column;height:100vh;margin:0;color:var(--vscode-editor-foreground);background:var(--vscode-editor-background);font:13px var(--vscode-font-family);}
+button{cursor:pointer;font:inherit;color:inherit}button:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:-2px}[hidden]{display:none!important}
+header{flex:none;padding:18px 24px 12px;border-bottom:1px solid var(--vscode-panel-border)}
+.toolbar,.context,.actions,.summary{display:flex;align-items:center;gap:12px}.toolbar{justify-content:space-between;flex-wrap:wrap}.context{min-width:0}h1{margin:0;font-size:15px;font-weight:600;white-space:nowrap}
+.branch-button{display:flex;align-items:center;gap:7px;min-width:0;max-width:280px;padding:5px 9px;border:1px solid var(--vscode-panel-border);border-radius:5px;background:transparent;color:var(--vscode-textLink-foreground)}
+.branch-button svg{flex:none}.branch-button:hover,.actions button:hover,.row-action:hover{background:var(--vscode-toolbar-hoverBackground)}#branch{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.actions{gap:4px;flex-wrap:wrap}.actions button{padding:5px 9px;border:1px solid transparent;border-radius:4px;background:transparent}.actions .refresh{display:flex;align-items:center;gap:6px}.actions .cherry{background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground)}
+.summary{justify-content:space-between;margin-top:12px;font-size:12px;color:var(--vscode-descriptionForeground)}.hint{white-space:nowrap}
+.history{--graph-width:56px;--author-width:148px;--date-width:100px;--hash-width:76px;flex:1;min-height:0;overflow:auto;padding:0 12px}
+.columns,.commit{display:grid;grid-template-columns:var(--graph-width) minmax(180px,1fr) var(--author-width) var(--date-width) var(--hash-width);align-items:center;column-gap:12px}
+.columns{position:sticky;top:0;z-index:1;min-width:660px;padding:12px 44px 10px 12px;background:var(--vscode-editor-background);border-bottom:1px solid var(--vscode-panel-border);font-size:11px;color:var(--vscode-descriptionForeground)}
+.row{display:flex;align-items:center;min-width:660px;padding:0 12px;border-radius:4px}.row.current{background:color-mix(in srgb,var(--vscode-textLink-foreground) 7%,transparent)}.row:has(.commit:hover),.row:focus-within{background:var(--vscode-list-hoverBackground)}
+.commit{flex:1;min-width:0;height:44px;padding:0;border:0;background:transparent;text-align:left}.graph{display:block;overflow:visible}.graph .node{fill:var(--vscode-editor-background);stroke-width:2}.graph .merge-node{stroke-width:3}.graph .head-node{fill:var(--vscode-editor-background);stroke-width:2;opacity:.45}
+.message,.author,.refs{display:flex;align-items:center;gap:8px;min-width:0}.subject,.author-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.subject{font-weight:500}.refs{flex:none;max-width:42%;overflow:hidden;gap:4px}.ref{display:block;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:1px solid var(--vscode-panel-border);border-radius:4px;padding:2px 6px;font-size:11px;color:var(--vscode-descriptionForeground)}.ref.head{color:var(--vscode-textLink-foreground);border-color:color-mix(in srgb,var(--vscode-textLink-foreground) 40%,transparent);background:color-mix(in srgb,var(--vscode-textLink-foreground) 8%,transparent)}.ref.tag{color:var(--vscode-charts-orange,var(--vscode-descriptionForeground))}
+.author,.date,.hash{font-size:12px;color:var(--vscode-descriptionForeground)}.date,.hash{white-space:nowrap}.hash{font-family:var(--vscode-editor-font-family,monospace);font-size:11px}.avatar{flex:none;position:relative;display:inline-grid;place-items:center;width:22px;height:22px;border:1px solid var(--vscode-panel-border);border-radius:50%;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);font-size:10px;overflow:hidden}.avatar img{position:absolute;width:100%;height:100%;object-fit:cover}
+.row-action{flex:none;width:32px;height:28px;padding:0;border:0;border-radius:4px;background:transparent;color:var(--vscode-descriptionForeground);font-size:20px;opacity:0}.row:hover .row-action,.row:focus-within .row-action,.row-action:focus-visible{opacity:1}.empty{display:block;padding:48px 16px;text-align:center;color:var(--vscode-descriptionForeground)}
+#more{display:block;margin:16px auto 24px;padding:7px 18px;border:1px solid var(--vscode-panel-border);border-radius:4px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground)}#more:hover{background:var(--vscode-button-secondaryHoverBackground)}
+@media(max-width:800px){header{padding:14px 16px 12px}.history{--author-width:100px;--date-width:84px;padding:0 4px}.hint{display:none}.row,.columns{min-width:580px}.refs{max-width:45%}}
+@media(max-width:700px){.columns,.commit{grid-template-columns:var(--graph-width) minmax(180px,1fr) 28px 64px}.row,.columns{min-width:440px}.date,.columns>span:nth-child(4),.author-name{display:none}}
+@media(hover:none){.row-action{opacity:1}}
+@media(forced-colors:active){.row.current{outline:1px solid CanvasText;outline-offset:-1px}.graph path,.graph circle{stroke:CanvasText}.ref{border-color:CanvasText}}
+</style></head><body>
+<header><div class="toolbar"><div class="context"><h1>提交图</h1><button class="branch-button" data-action="switch" title="切换本地分支" aria-label="切换分支"><svg width="14" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="4" cy="3" r="2"/><circle cx="12" cy="4" r="2"/><circle cx="4" cy="13" r="2"/><path d="M4 5v6m8-5c0 4-8 1-8 5"/></svg><span id="branch">读取分支…</span></button></div>
+<div class="actions"><button data-action="create">＋ 新建分支</button><button data-action="merge">合并分支</button><button class="cherry" data-action="cherryContinue" hidden>继续 Cherry-pick</button><button class="cherry" data-action="cherryAbort" hidden>中止 Cherry-pick</button><button class="refresh" data-action="refresh"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M13 6a5 5 0 1 0 0 5M13 2v4H9"/></svg>刷新</button></div></div>
+<div class="summary"><span id="status" role="status" aria-live="polite">正在加载…</span><span class="hint">点击提交查看详情 · 悬停显示更多操作</span></div></header>
+<main class="history" aria-label="提交历史"><div class="columns" aria-hidden="true"><span>提交线</span><span>提交信息</span><span>作者</span><span>日期</span><span>Commit</span></div><div id="rows"></div><button id="more" data-action="loadMore" hidden>加载更多提交</button></main>
 <script nonce="${nonce}">
 const vscode=acquireVsCodeApi(), rows=document.getElementById('rows'), status=document.getElementById('status'), more=document.getElementById('more');
-const colors=['#64b5f6','#ffb74d','#81c784','#ba68c8','#e57373','#4dd0e1','#ffd54f','#a1887f'];let data,avatars={};
-function graphCell(text,width){const cell=document.createElement('span');cell.className='graph';cell.style.width=width+'ch';for(let i=0;i<text.length;i++){const s=document.createElement('span'),c=text[i];s.style.color=colors[Math.floor(i/2)%colors.length];s.textContent=c.charCodeAt(0)===92?'╲':({'*':'●','|':'│','/':'╱','_':'─'})[c]||c;cell.append(s)}return cell}
-function draw(){rows.replaceChildren();if(!data)return;document.getElementById('branch').textContent=data.branch||'分离 HEAD';const width=Math.max(3,...data.rows.map(r=>r.graph.length));for(const row of data.rows){const item=document.createElement('div');item.className='row '+(row.hash?'':'connector');if(row.hash){const detail=document.createElement('button');detail.type='button';detail.className='commit';detail.dataset.hash=row.hash;detail.setAttribute('aria-label',(row.subject||'')+'，作者 '+(row.author||'')+'，'+row.hash);detail.append(graphCell(row.graph,width));const avatar=document.createElement('span');avatar.className='avatar';avatar.textContent=(row.author||'?').trim().slice(0,1).toUpperCase();const url=avatars[(row.email||'').toLowerCase()];if(url){const img=document.createElement('img');img.alt='';img.loading='lazy';img.src=url;img.onerror=()=>img.remove();avatar.append(img)}detail.append(avatar);const subject=document.createElement('span');subject.className='subject';subject.textContent=row.subject||'（无标题）';subject.title=row.subject||'';detail.append(subject);if(row.refs){const ref=document.createElement('span');ref.className='ref';ref.textContent=row.refs;detail.append(ref)}const meta=document.createElement('span');meta.className='meta';meta.textContent=(row.author||'')+' · '+new Date((row.time||0)*1000).toLocaleDateString('zh-CN')+' · '+row.hash.slice(0,7);detail.append(meta);item.append(detail);const actions=document.createElement('button');actions.type='button';actions.className='row-action';actions.dataset.actionsHash=row.hash;actions.textContent='⋯';actions.title='提交操作';actions.setAttribute('aria-label','提交操作：'+row.hash);item.append(actions)}else item.append(graphCell(row.graph,width));rows.append(item)}status.textContent=data.rows.some(r=>r.hash)?'点击提交查看详情；合并前需保持工作区干净。':'仓库暂无提交。';more.hidden=!data.hasMore}
+const colors=['blue','orange','green','purple','red','yellow'].map(name=>'var(--vscode-charts-'+name+', var(--vscode-textLink-foreground))');let data,avatars={};
+function svgElement(name,attributes){const element=document.createElementNS('http://www.w3.org/2000/svg',name);for(const [key,value] of Object.entries(attributes))element.setAttribute(key,String(value));return element}
+function graphCells(commits){
+  const cells=[];let lanes=[],nextColor=0,maxLanes=1;
+  for(const row of commits){
+    let column=lanes.findIndex(lane=>lane.hash===row.hash);const incoming=column>=0;
+    if(!incoming){column=lanes.length;lanes.push({hash:row.hash,color:colors[nextColor++%colors.length]})}
+    const current=lanes[column],parents=row.parents||[],next=lanes.filter((_,index)=>index!==column);
+    parents.forEach((hash,index)=>{if(!next.some(lane=>lane.hash===hash))next.splice(Math.min(column+index,next.length),0,{hash,color:index===0?current.color:colors[nextColor++%colors.length]})});
+    maxLanes=Math.max(maxLanes,lanes.length,next.length);
+    const cell=svgElement('svg',{class:'graph',height:44,'aria-hidden':'true'}),x=16+column*20;
+    const connect=(from,to,color,start)=>cell.append(svgElement('path',{d:'M '+from+' '+start+' V 22 C '+from+' 33 '+to+' 33 '+to+' 44',fill:'none',stroke:color,'stroke-width':1.8}));
+    lanes.forEach((lane,index)=>{
+      const from=16+index*20;
+      if(index!==column)connect(from,16+next.findIndex(target=>target.hash===lane.hash)*20,lane.color,0);
+      else if(incoming)cell.append(svgElement('path',{d:'M '+x+' 0 V 22',fill:'none',stroke:current.color,'stroke-width':1.8}));
+    });
+    for(const hash of parents){const index=next.findIndex(lane=>lane.hash===hash);connect(x,16+index*20,next[index].color,22)}
+    if(isHead(row))cell.append(svgElement('circle',{class:'head-node',cx:x,cy:22,r:8,stroke:current.color}));
+    cell.append(svgElement('circle',{class:'node'+(parents.length>1?' merge-node':''),cx:x,cy:22,r:4,stroke:current.color}));
+    cells.push(cell);lanes=next;
+  }
+  const width=Math.max(56,maxLanes*20+12);for(const cell of cells){cell.setAttribute('width',width);cell.setAttribute('viewBox','0 0 '+width+' 44')}
+  return {cells,width};
+}
+function isHead(row){return (row.refs||'').split(', ').some(ref=>ref==='HEAD'||ref.startsWith('HEAD -> '))}
+function label(className,text){const element=document.createElement('span');element.className=className;element.textContent=text;return element}
+function draw(){
+  rows.replaceChildren();if(!data)return;
+  const branch=document.getElementById('branch');branch.textContent=data.branch||'分离 HEAD';branch.title=branch.textContent;
+  const commits=data.rows.filter(row=>row.hash),{cells,width}=graphCells(commits);rows.parentElement.style.setProperty('--graph-width',width+'px');
+  let count=0;
+  for(const row of commits){
+    const item=document.createElement('div');item.className='row'+(isHead(row)?' current':'');
+    const graph=cells[count++];
+    const detail=document.createElement('button');detail.type='button';detail.className='commit';detail.dataset.hash=row.hash;
+    detail.setAttribute('aria-label',(row.subject||'')+'，作者 '+(row.author||'')+'，'+row.hash+(row.refs?'，'+row.refs:''));
+    detail.append(graph);
+    const message=label('message',''),subject=label('subject',row.subject||'（无标题）');subject.title=row.subject||'';
+    if(row.refs){
+      const refs=label('refs','');refs.title=row.refs;
+      for(const value of row.refs.split(', ')){
+        const head=value==='HEAD'||value.startsWith('HEAD -> '),tag=value.startsWith('tag: ');
+        const ref=label('ref'+(head?' head':tag?' tag':''),head?(value==='HEAD'?'HEAD':value.slice(8)):tag?value.slice(5):value);ref.title=value;refs.append(ref);
+      }
+      message.append(refs);
+    }
+    message.append(subject);detail.append(message);
+    const author=label('author',''),avatar=label('avatar',(row.author||'?').trim().slice(0,1).toUpperCase());avatar.setAttribute('aria-hidden','true');
+    const url=avatars[(row.email||'').toLowerCase()];
+    if(url){const img=document.createElement('img');img.alt='';img.loading='lazy';img.src=url;img.onerror=()=>img.remove();avatar.append(img)}
+    author.title=(row.author||'')+(row.email?' <'+row.email+'>':'');author.append(avatar,label('author-name',row.author||'未知作者'));detail.append(author);
+    const time=new Date((row.time||0)*1000),date=label('date',time.toLocaleDateString('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit'}));date.title=time.toLocaleString('zh-CN');
+    detail.title=(row.subject||'（无标题）')+'\\n'+(row.author||'')+' · '+date.title+'\\n'+row.hash+(row.refs?'\\n'+row.refs:'');
+    const hash=label('hash',row.hash.slice(0,7));hash.title=row.hash;detail.append(date,hash);item.append(detail);
+    const actions=document.createElement('button');actions.type='button';actions.className='row-action';actions.dataset.actionsHash=row.hash;actions.textContent='⋯';actions.title='提交操作';actions.setAttribute('aria-label','提交操作：'+row.hash);item.append(actions);
+    rows.append(item);
+  }
+  status.textContent=count?'已显示 '+count+' 条提交'+(data.hasMore?' · 可加载更多':''):'仓库暂无提交';
+  if(!count)rows.append(label('empty','还没有提交，完成首次提交后即可查看历史。'));
+  more.hidden=!data.hasMore;
+}
 document.addEventListener('click',event=>{const action=event.target.closest('[data-action]');if(action){vscode.postMessage({type:action.dataset.action});return}const commitActions=event.target.closest('[data-actions-hash]');if(commitActions){vscode.postMessage({type:'actions',hash:commitActions.dataset.actionsHash});return}const commit=event.target.closest('[data-hash]');if(commit)vscode.postMessage({type:'commit',hash:commit.dataset.hash})});
 window.addEventListener('message',event=>{const message=event.data;if(message.type==='loading')status.textContent='正在加载…';else if(message.type==='error')status.textContent=message.message;else if(message.type==='render'){data=message.data;for(const action of ['cherryContinue','cherryAbort'])document.querySelector('[data-action="'+action+'"]').hidden=!message.cherryInProgress;draw()}else if(message.type==='avatars'){avatars=message.avatars||{};draw()}});
 vscode.postMessage({type:'ready'});
