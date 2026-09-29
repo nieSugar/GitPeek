@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import type { GitService } from '../git/GitService';
 import type { RepositoryService } from '../git/RepositoryService';
 import type { Repository } from '../git/types';
+import { checkoutCommit } from './checkoutCommit';
 import {
   avatarByEmail, createAndSwitchBranch, loadGraph, mergeLocalBranch, parseGitHubRemote,
   switchLocalBranch, type GraphSnapshot,
@@ -92,14 +93,28 @@ export function registerCommitGraph(
       const valid = (): boolean => Boolean(panel && targetRepo && repo?.id === targetRepo.id && snapshot === targetSnapshot && generation === targetGeneration && typeof hash === 'string' && snapshot?.rows.some(row => row.hash === hash));
       if (!valid()) return;
       try {
-        const selected = await vscode.window.showQuickPick([{ label: '复制完整 Hash', action: 'copy' }], {
+        const selected = await vscode.window.showQuickPick([
+          { label: '复制完整 Hash', action: 'copy' },
+          { label: '检出此提交', action: 'checkout' },
+        ], {
           title: `GitPeek：提交 ${String(hash).slice(0, 7)}`, placeHolder: '选择提交操作',
         });
-        if (!selected || selected.action !== 'copy' || !valid()) return;
-        await vscode.env.clipboard.writeText(hash as string);
-        if (valid()) await vscode.window.showInformationMessage('GitPeek：已复制完整 Commit Hash。');
+        if (!selected || !valid()) return;
+        if (selected.action === 'copy') {
+          await vscode.env.clipboard.writeText(hash as string);
+          if (valid()) await vscode.window.showInformationMessage('GitPeek：已复制完整 Commit Hash。');
+        } else if (selected.action === 'checkout') {
+          const confirmed = await vscode.window.showWarningMessage(
+            `检出提交 ${String(hash).slice(0, 7)} 并进入分离 HEAD 状态？工作区必须干净。`,
+            { modal: true }, '检出',
+          );
+          if (confirmed !== '检出' || !valid()) return;
+          await checkoutCommit(git, targetRepo, hash as string);
+          await vscode.commands.executeCommand('gitpeek.refresh');
+          await refresh();
+        }
       } catch (error) {
-        if (valid()) await vscode.window.showErrorMessage(`GitPeek：复制 Commit Hash 失败：${errorText(error)}`);
+        await vscode.window.showErrorMessage(`GitPeek：提交操作失败：${errorText(error)}`);
       }
       return;
     }
