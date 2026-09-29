@@ -26,6 +26,8 @@ async function main() {
     assert.match(script, /dataset\.actionsHash=row\.hash/);
     assert.match(script, /type:'actions',hash:commitActions\.dataset\.actionsHash/);
     assert.match(script, /type:'commit',hash:commit\.dataset\.hash/);
+    assert.match(html, /继续 Cherry-pick/);
+    assert.match(html, /中止 Cherry-pick/);
     console.log('Commit graph Webview script and CSP check passed.');
   } finally {
     Module._load = originalLoad;
