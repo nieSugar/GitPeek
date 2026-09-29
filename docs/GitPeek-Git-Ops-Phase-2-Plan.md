@@ -1,8 +1,8 @@
-# GitPeek Git 操作第二阶段计划（草案）
+# GitPeek Git 操作第二阶段（已完成）
 
 - 基线：`v0.2.0` 已交付提交图、公开 GitHub 头像，以及本地分支切换、创建、合并。
 - 阶段目标：从提交图直接完成常用的提交级操作，并清楚展示操作结果与冲突状态。
-- 来源：本轮用户选择的“先做分支操作”和现有代码；待用户提供所指的 MCP 任务源后逐项对齐。旧版 [v0.1.0 开发计划](./GitPeek-Development-Plan.md)中的“阶段 2”是已完成的 Current Line Blame。
+- 来源：本轮用户选择的“先做分支操作”和现有代码。当前可用的 MCP 未返回独立的 GitPeek 阶段任务清单；若后续提供任务源，再对照补充。旧版 [v0.1.0 开发计划](./GitPeek-Development-Plan.md)中的“阶段 2”是已完成的 Current Line Blame。
 - 执行约定：每个功能及其自动检查各占一个 Conventional Commit；按可并行的代码边界交给 `6luna` 子代理，最后统一集成与实际 UI 验收。
 
 ## 任务 2.1：提交图操作入口与复制 Hash
@@ -38,3 +38,12 @@
 ## 本阶段之外
 
 Stash、Reset、Interactive Rebase、远程 Push/Pull 和 PR 集成留待后续单独划分；这些操作需要各自的状态恢复与验收规则。
+
+## 执行与验收记录
+
+- 任务 2.1：`098342f feat(graph): 添加提交操作入口与复制 Hash`。
+- 任务 2.2：`5b4fbd3 feat(commit): 支持从提交图检出提交`。
+- 任务 2.3：`533da5b feat(commit): 添加 Cherry-pick 与冲突处理`。
+- Windows：`npm run check`、`npm test`（13 项）和 `npm run package` 通过，生成并安装 `gitpeek-0.3.0.vsix`。
+- 真实 VS Code 临时仓库：鼠标和键盘打开提交操作菜单；复制 Hash；取消检出保持原分支、确认检出进入分离 HEAD，并从图切回 `main`；Cherry-pick 成功后出现新提交；冲突时显示继续／中止按钮，取消中止保留状态，确认中止恢复干净工作区，解决并暂存冲突后点击继续生成新提交。
+- 未在 macOS/Linux 的 VS Code 界面实际验证；Git 逻辑的自动检查使用本机临时真实仓库。
