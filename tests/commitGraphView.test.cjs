@@ -23,6 +23,9 @@ async function main() {
     new vm.Script(script, { filename: 'GitPeek graph webview' });
     assert.match(html, /script-src 'nonce-/);
     assert.match(html, /切换分支/);
+    assert.match(script, /dataset\.actionsHash=row\.hash/);
+    assert.match(script, /type:'actions',hash:commitActions\.dataset\.actionsHash/);
+    assert.match(script, /type:'commit',hash:commit\.dataset\.hash/);
     console.log('Commit graph Webview script and CSP check passed.');
   } finally {
     Module._load = originalLoad;
