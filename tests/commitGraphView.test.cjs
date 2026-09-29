@@ -22,7 +22,7 @@ async function main() {
     assert.ok(script, 'graph webview script is present');
     new vm.Script(script, { filename: 'GitPeek graph webview' });
     assert.match(html, /script-src 'nonce-/);
-    assert.match(html, /提交图/);
+    assert.match(html, /切换分支/);
     console.log('Commit graph Webview script and CSP check passed.');
   } finally {
     Module._load = originalLoad;

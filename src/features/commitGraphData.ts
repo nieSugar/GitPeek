@@ -55,6 +55,30 @@ export async function loadGraph(git: GitService, repo: Repository, limit = 100):
   return { branch: branch.trim(), branches: branches.trim().split(/\r?\n/).filter(Boolean), ...result };
 }
 
+export async function createAndSwitchBranch(git: GitService, repo: Repository, name: string): Promise<void> {
+  await git.run(repo, ['check-ref-format', '--branch', name]);
+  await git.run(repo, ['switch', '-c', name]);
+}
+
+export async function switchLocalBranch(git: GitService, repo: Repository, name: string): Promise<void> {
+  const branches = (await git.run(repo, ['for-each-ref', '--format=%(refname:short)', 'refs/heads'])).trim().split(/\r?\n/);
+  if (!branches.includes(name)) throw new Error(`本地分支“${name}”不存在。`);
+  await git.run(repo, ['switch', '--', name]);
+}
+
+export async function mergeLocalBranch(git: GitService, repo: Repository, name: string): Promise<void> {
+  const [current, branches, status] = await Promise.all([
+    git.run(repo, ['branch', '--show-current']),
+    git.run(repo, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']),
+    git.run(repo, ['status', '--porcelain', '-z']),
+  ]);
+  if (!current.trim()) throw new Error('分离 HEAD 状态下无法合并到当前分支。');
+  if (current.trim() === name) throw new Error('不能合并当前分支自身。');
+  if (!branches.trim().split(/\r?\n/).includes(name)) throw new Error(`本地分支“${name}”不存在。`);
+  if (status) throw new Error('合并前请先提交或处理工作区更改。');
+  await git.run(repo, ['merge', '--no-edit', '--', name], { timeoutMs: 20_000 });
+}
+
 export function parseGitHubRemote(remote: string): { owner: string; repo: string } | undefined {
   const match = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/.exec(remote.trim());
   return match ? { owner: match[1], repo: match[2] } : undefined;

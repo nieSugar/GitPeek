@@ -4,7 +4,10 @@ import * as vscode from 'vscode';
 import type { GitService } from '../git/GitService';
 import type { RepositoryService } from '../git/RepositoryService';
 import type { Repository } from '../git/types';
-import { avatarByEmail, loadGraph, parseGitHubRemote, type GraphSnapshot } from './commitGraphData';
+import {
+  avatarByEmail, createAndSwitchBranch, loadGraph, mergeLocalBranch, parseGitHubRemote,
+  switchLocalBranch, type GraphSnapshot,
+} from './commitGraphData';
 
 export function registerCommitGraph(
   context: vscode.ExtensionContext,
@@ -79,6 +82,37 @@ export function registerCommitGraph(
       if (typeof hash === 'string' && snapshot?.rows.some(row => row.hash === hash)) await showCommit(repo, hash);
       return;
     }
+    try {
+      if (action === 'switch') {
+        const branches = snapshot?.branches ?? [];
+        const selected = await vscode.window.showQuickPick(branches.filter(name => name !== snapshot?.branch), {
+          title: 'GitPeek：切换本地分支', placeHolder: '选择目标分支',
+        });
+        if (selected) await switchLocalBranch(git, repo, selected);
+        else return;
+      } else if (action === 'create') {
+        const name = await vscode.window.showInputBox({ title: 'GitPeek：创建并切换分支', prompt: '输入新分支名称' });
+        if (!name) return;
+        await createAndSwitchBranch(git, repo, name.trim());
+      } else if (action === 'merge') {
+        if (!snapshot?.branch) throw new Error('分离 HEAD 状态下无法合并。');
+        const selected = await vscode.window.showQuickPick(snapshot.branches.filter(name => name !== snapshot?.branch), {
+          title: `GitPeek：合并到 ${snapshot.branch}`, placeHolder: '选择要合入当前分支的本地分支',
+        });
+        if (!selected) return;
+        const answer = await vscode.window.showWarningMessage(
+          `将“${selected}”合并到当前分支“${snapshot.branch}”？合并前工作区必须干净。`,
+          { modal: true }, '合并',
+        );
+        if (answer !== '合并') return;
+        await mergeLocalBranch(git, repo, selected);
+      } else return;
+      await vscode.commands.executeCommand('gitpeek.refresh');
+      await refresh();
+    } catch (error) {
+      await vscode.window.showErrorMessage(`GitPeek：Git 操作失败：${errorText(error)}`);
+      await refresh();
+    }
   };
 
   const loadAvatars = async (target: Repository, branch: string): Promise<Record<string, string>> => {
@@ -126,12 +160,12 @@ header{position:sticky;top:0;z-index:2;padding:12px 16px;background:var(--vscode
 .actions{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}button{cursor:pointer;font:inherit} .actions button,#more{color:var(--vscode-button-foreground);background:var(--vscode-button-background);border:0;border-radius:3px;padding:5px 9px}.actions button:hover,#more:hover{background:var(--vscode-button-hoverBackground)}
 #status{padding:8px 16px;color:var(--vscode-descriptionForeground)}#rows{overflow:auto}.row{display:flex;align-items:center;width:100%;min-height:30px;box-sizing:border-box;padding:2px 16px;border:0;border-bottom:1px solid var(--vscode-panel-border);background:transparent;color:inherit;text-align:left;gap:8px}.commit:hover,.commit:focus-visible{background:var(--vscode-list-hoverBackground);outline:1px solid var(--vscode-focusBorder)}
 .graph{flex:none;white-space:pre;font:16px/24px monospace}.avatar{flex:none;position:relative;display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);font-size:11px;font-weight:bold;overflow:hidden}.avatar img{position:absolute;width:100%;height:100%;object-fit:cover}.subject{min-width:120px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.meta{color:var(--vscode-descriptionForeground);white-space:nowrap}.ref{padding:1px 5px;border-radius:8px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);white-space:nowrap}.connector{min-height:15px;height:15px;border:0;padding-top:0;padding-bottom:0}.connector .graph{line-height:15px}#more{margin:12px 16px}#more[hidden]{display:none}
-</style></head><body><header><div class="top"><strong>提交图</strong><span id="branch"></span></div><div class="actions"><button data-action="refresh">刷新</button></div></header><div id="status">正在加载…</div><main id="rows" aria-label="提交历史"></main><button id="more" data-action="loadMore" hidden>加载更多</button>
+</style></head><body><header><div class="top"><strong>提交图</strong><span id="branch"></span></div><div class="actions"><button data-action="switch">切换分支</button><button data-action="create">新建分支</button><button data-action="merge">合并分支</button><button data-action="refresh">刷新</button></div></header><div id="status">正在加载…</div><main id="rows" aria-label="提交历史"></main><button id="more" data-action="loadMore" hidden>加载更多</button>
 <script nonce="${nonce}">
 const vscode=acquireVsCodeApi(), rows=document.getElementById('rows'), status=document.getElementById('status'), more=document.getElementById('more');
 const colors=['#64b5f6','#ffb74d','#81c784','#ba68c8','#e57373','#4dd0e1','#ffd54f','#a1887f'];let data,avatars={};
 function graphCell(text,width){const cell=document.createElement('span');cell.className='graph';cell.style.width=width+'ch';for(let i=0;i<text.length;i++){const s=document.createElement('span'),c=text[i];s.style.color=colors[Math.floor(i/2)%colors.length];s.textContent=c.charCodeAt(0)===92?'╲':({'*':'●','|':'│','/':'╱','_':'─'})[c]||c;cell.append(s)}return cell}
-function draw(){rows.replaceChildren();if(!data)return;document.getElementById('branch').textContent=data.branch||'分离 HEAD';const width=Math.max(3,...data.rows.map(r=>r.graph.length));for(const row of data.rows){const item=document.createElement(row.hash?'button':'div');item.className='row '+(row.hash?'commit':'connector');item.append(graphCell(row.graph,width));if(row.hash){item.dataset.hash=row.hash;item.setAttribute('aria-label',(row.subject||'')+'，作者 '+(row.author||'')+'，'+row.hash);const avatar=document.createElement('span');avatar.className='avatar';avatar.textContent=(row.author||'?').trim().slice(0,1).toUpperCase();const url=avatars[(row.email||'').toLowerCase()];if(url){const img=document.createElement('img');img.alt='';img.loading='lazy';img.src=url;img.onerror=()=>img.remove();avatar.append(img)}item.append(avatar);const subject=document.createElement('span');subject.className='subject';subject.textContent=row.subject||'（无标题）';subject.title=row.subject||'';item.append(subject);if(row.refs){const ref=document.createElement('span');ref.className='ref';ref.textContent=row.refs;item.append(ref)}const meta=document.createElement('span');meta.className='meta';meta.textContent=(row.author||'')+' · '+new Date((row.time||0)*1000).toLocaleDateString('zh-CN')+' · '+row.hash.slice(0,7);item.append(meta)}rows.append(item)}status.textContent=data.rows.some(r=>r.hash)?'点击提交查看详情。':'仓库暂无提交。';more.hidden=!data.hasMore}
+function draw(){rows.replaceChildren();if(!data)return;document.getElementById('branch').textContent=data.branch||'分离 HEAD';const width=Math.max(3,...data.rows.map(r=>r.graph.length));for(const row of data.rows){const item=document.createElement(row.hash?'button':'div');item.className='row '+(row.hash?'commit':'connector');item.append(graphCell(row.graph,width));if(row.hash){item.dataset.hash=row.hash;item.setAttribute('aria-label',(row.subject||'')+'，作者 '+(row.author||'')+'，'+row.hash);const avatar=document.createElement('span');avatar.className='avatar';avatar.textContent=(row.author||'?').trim().slice(0,1).toUpperCase();const url=avatars[(row.email||'').toLowerCase()];if(url){const img=document.createElement('img');img.alt='';img.loading='lazy';img.src=url;img.onerror=()=>img.remove();avatar.append(img)}item.append(avatar);const subject=document.createElement('span');subject.className='subject';subject.textContent=row.subject||'（无标题）';subject.title=row.subject||'';item.append(subject);if(row.refs){const ref=document.createElement('span');ref.className='ref';ref.textContent=row.refs;item.append(ref)}const meta=document.createElement('span');meta.className='meta';meta.textContent=(row.author||'')+' · '+new Date((row.time||0)*1000).toLocaleDateString('zh-CN')+' · '+row.hash.slice(0,7);item.append(meta)}rows.append(item)}status.textContent=data.rows.some(r=>r.hash)?'点击提交查看详情；合并前需保持工作区干净。':'仓库暂无提交。';more.hidden=!data.hasMore}
 document.addEventListener('click',event=>{const action=event.target.closest('[data-action]');if(action){vscode.postMessage({type:action.dataset.action});return}const commit=event.target.closest('[data-hash]');if(commit)vscode.postMessage({type:'commit',hash:commit.dataset.hash})});
 window.addEventListener('message',event=>{const message=event.data;if(message.type==='loading')status.textContent='正在加载…';else if(message.type==='error')status.textContent=message.message;else if(message.type==='render'){data=message.data;draw()}else if(message.type==='avatars'){avatars=message.avatars||{};draw()}});
 vscode.postMessage({type:'ready'});

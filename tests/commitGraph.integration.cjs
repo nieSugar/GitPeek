@@ -51,7 +51,21 @@ async function main() {
     assert.equal(graph.parseGitHubRemote('https://example.com/owner/project'), undefined);
     assert.deepEqual(graph.avatarByEmail([{ commit: { author: { email: 'A@EXAMPLE.COM' } }, author: { avatar_url: 'https://avatars.githubusercontent.com/u/1' } }]), { 'a@example.com': 'https://avatars.githubusercontent.com/u/1' });
 
-    console.log('Commit graph check passed (merge lanes and avatars).');
+    await graph.createAndSwitchBranch(service, repo, 'test/new');
+    assert.equal(git(repoPath, 'branch', '--show-current'), 'test/new');
+    await assert.rejects(graph.createAndSwitchBranch(service, repo, 'bad name'));
+    await graph.switchLocalBranch(service, repo, 'main');
+    await assert.rejects(graph.switchLocalBranch(service, repo, 'missing'));
+    git(repoPath, 'switch', '-c', 'another');
+    writeFileSync(join(repoPath, 'another.txt'), 'another\n', 'utf8');
+    git(repoPath, 'add', '--', 'another.txt');
+    git(repoPath, 'commit', '-m', 'another branch');
+    git(repoPath, 'switch', 'main');
+    await graph.mergeLocalBranch(service, repo, 'another');
+    assert.equal(git(repoPath, 'show', 'HEAD:another.txt'), 'another');
+    writeFileSync(join(repoPath, 'dirty.txt'), 'dirty\n', 'utf8');
+    await assert.rejects(graph.mergeLocalBranch(service, repo, 'feature'), /工作区更改/);
+    console.log('Commit graph check passed (merge lanes, avatars, branch switch/create/merge).');
   } finally {
     if (!root.startsWith(tmpdir() + sep)) throw new Error('Temporary repository escaped temp directory');
     rmSync(root, { recursive: true, force: true });
