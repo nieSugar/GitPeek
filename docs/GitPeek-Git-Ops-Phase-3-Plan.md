@@ -1,4 +1,4 @@
-# GitPeek Git 操作第三阶段计划：Stash Lite
+# GitPeek Git 操作第三阶段：Stash Lite
 
 - 基线：第二阶段已完成提交图操作入口、检出提交与 Cherry-pick，安装包版本为 `0.3.0`。
 - 目标：在当前仓库安全地保存、查看、应用和清理 Stash；所有写操作复用 `GitService.run`，使用原生 VS Code QuickPick 与确认框。
@@ -37,3 +37,14 @@
 1. 先交付任务 3.1 的列表与稳定身份；任务 3.2 的 Git 逻辑可并行，3.3 和 3.4 依赖列表选择与身份校验。
 2. 全部完成后运行 `npm run check`、`npm test`、`npm run package`，并用隔离的 VS Code 临时仓库检查完整流程和取消路径。
 3. 计划之外：`stash pop`、`reset --hard`、Interactive Rebase、远程 Push/Pull 与 PR 集成另行划分。
+
+## 执行与验收记录
+
+- 任务 3.1：`994af80 feat(stash): 添加列表与改动预览`。
+- 任务 3.2：`8b986d6 feat(stash): 保存当前仓库改动`。
+- 任务 3.3：`e60f47f feat(stash): 安全应用所选改动`。
+- 任务 3.4：`9018ece feat(stash): 确认后删除所选记录`。
+- Windows：`npm run check`、`npm test`（17 项）和 `npm run package` 通过，生成并本机安装 `gitpeek-0.4.0.vsix`。
+- 真实 VS Code 临时仓库：空 Stash 提示、中文描述保存、包含未跟踪文件、两类文件及增删统计预览、应用后保留原 Stash、删除确认框与取消后保留记录均已验证。
+- 真实 Git 临时仓库自动检查：删除指定记录、引用漂移或过期时拒绝、多仓库隔离均通过。通过 Windows UI 点击最终“删除”尚待 `computer-use` 的现场确认；本次验收未点击该按钮。
+- macOS/Linux 的 VS Code 界面尚未实际验证。
