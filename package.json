@@ -25,7 +25,7 @@
     "build": "npm run compile",
     "watch": "node esbuild.js --watch",
     "check": "tsc --noEmit",
-    "test": "node --test tests/git-service.integration.cjs tests/blame.test.cjs tests/virtualEditor.test.cjs tests/fileHistory.test.mjs tests/commitGraph.integration.cjs tests/commitGraphView.test.cjs tests/checkoutCommit.integration.cjs tests/cherryPickCommit.integration.cjs tests/stashList.integration.cjs tests/stashSave.integration.cjs tests/stashApply.integration.cjs tests/stashDrop.integration.cjs tests/commit-detail.integration.cjs tests/branchCompare.integration.cjs tests/selectionOrigins.integration.cjs tests/reviewChanges.integration.cjs tests/smartCommit.test.mjs",
+    "test": "node --test tests/git-service.integration.cjs tests/blame.test.cjs tests/virtualEditor.test.cjs tests/fileHistory.test.mjs tests/commitGraph.integration.cjs tests/commitGraphView.test.cjs tests/checkoutCommit.integration.cjs tests/cherryPickCommit.integration.cjs tests/stashList.integration.cjs tests/stashSave.integration.cjs tests/stashApply.integration.cjs tests/stashDrop.integration.cjs tests/commit-detail.integration.cjs tests/branchCompare.integration.cjs tests/selectionOrigins.integration.cjs tests/reviewChanges.integration.cjs tests/smartCommit.test.mjs tests/contextMenus.test.cjs",
     "package": "npm run check && npm run compile && vsce package --no-dependencies"
   },
   "devDependencies": {
@@ -76,7 +76,68 @@
       },
       {
         "command": "gitpeek.refresh",
-        "title": "GitPeek: 刷新"
+        "title": "GitPeek: 刷新",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "gitpeek.internal.tree.openDiff",
+        "title": "打开差异",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled"
+      },
+      {
+        "command": "gitpeek.internal.tree.showCommit",
+        "title": "查看提交详情",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled"
+      },
+      {
+        "command": "gitpeek.internal.tree.copyHash",
+        "title": "复制完整 Hash",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled"
+      },
+      {
+        "command": "gitpeek.internal.reviewChanges.openFromContext",
+        "title": "打开差异",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled"
+      },
+      {
+        "command": "gitpeek.internal.graph.commit",
+        "title": "查看提交详情",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled"
+      },
+      {
+        "command": "gitpeek.internal.graph.copy",
+        "title": "复制完整 Hash",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled"
+      },
+      {
+        "command": "gitpeek.internal.graph.checkout",
+        "title": "检出此提交…",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled"
+      },
+      {
+        "command": "gitpeek.internal.graph.cherryPick",
+        "title": "Cherry-pick 到当前分支…",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled"
+      },
+      {
+        "command": "gitpeek.internal.file.open",
+        "title": "打开工作区文件",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled"
+      },
+      {
+        "command": "gitpeek.internal.file.copyRelativePath",
+        "title": "复制相对路径",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled"
       }
     ],
     "viewsContainers": {
@@ -114,6 +175,11 @@
           "command": "gitpeek.showCommitGraph",
           "when": "view == gitpeek.repository",
           "group": "navigation@1"
+        },
+        {
+          "command": "gitpeek.refresh",
+          "when": "config.gitpeek.enabled && view =~ /^gitpeek\\.(repository|changes|branchChanges|fileHistory)$/",
+          "group": "navigation@9"
         }
       ],
       "editor/title": [
@@ -130,9 +196,127 @@
       ],
       "editor/context": [
         {
+          "command": "gitpeek.fileHistory",
+          "when": "config.gitpeek.enabled && resourceScheme == file",
+          "group": "gitpeek@1"
+        },
+        {
+          "command": "gitpeek.compareWithBase",
+          "when": "config.gitpeek.enabled && resourceScheme == file",
+          "group": "gitpeek@2"
+        },
+        {
           "command": "gitpeek.selectionOrigins",
-          "when": "editorHasSelection && resourceScheme == file",
+          "when": "config.gitpeek.enabled && editorHasSelection && resourceScheme == file",
+          "group": "gitpeek@3"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "gitpeek.internal.tree.openDiff",
+          "when": "false"
+        },
+        {
+          "command": "gitpeek.internal.tree.showCommit",
+          "when": "false"
+        },
+        {
+          "command": "gitpeek.internal.tree.copyHash",
+          "when": "false"
+        },
+        {
+          "command": "gitpeek.internal.reviewChanges.openFromContext",
+          "when": "false"
+        },
+        {
+          "command": "gitpeek.internal.graph.commit",
+          "when": "false"
+        },
+        {
+          "command": "gitpeek.internal.graph.copy",
+          "when": "false"
+        },
+        {
+          "command": "gitpeek.internal.graph.checkout",
+          "when": "false"
+        },
+        {
+          "command": "gitpeek.internal.graph.cherryPick",
+          "when": "false"
+        },
+        {
+          "command": "gitpeek.internal.file.open",
+          "when": "false"
+        },
+        {
+          "command": "gitpeek.internal.file.copyRelativePath",
+          "when": "false"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "gitpeek.internal.tree.openDiff",
+          "when": "config.gitpeek.enabled && ((view == gitpeek.fileHistory && viewItem == gitpeek.historyCommit) || (view == gitpeek.branchChanges && viewItem == gitpeek.branchFile))",
           "group": "navigation@1"
+        },
+        {
+          "command": "gitpeek.internal.tree.showCommit",
+          "when": "config.gitpeek.enabled && ((view == gitpeek.fileHistory && viewItem == gitpeek.historyCommit) || (view == gitpeek.branchChanges && viewItem == gitpeek.branchCommit))",
+          "group": "navigation@2"
+        },
+        {
+          "command": "gitpeek.internal.tree.copyHash",
+          "when": "config.gitpeek.enabled && ((view == gitpeek.fileHistory && viewItem == gitpeek.historyCommit) || (view == gitpeek.branchChanges && viewItem == gitpeek.branchCommit))",
+          "group": "2_copy@1"
+        },
+        {
+          "command": "gitpeek.internal.reviewChanges.openFromContext",
+          "when": "config.gitpeek.enabled && view == gitpeek.changes && viewItem =~ /^gitpeek\\.review\\.(staged|unstaged|untracked)$/",
+          "group": "navigation@1"
+        },
+        {
+          "command": "gitpeek.internal.file.open",
+          "when": "config.gitpeek.enabled && ((view == gitpeek.fileHistory && viewItem =~ /^gitpeek\\.history(Commit|File)$/) || (view == gitpeek.branchChanges && viewItem == gitpeek.branchFile) || (view == gitpeek.changes && viewItem =~ /^gitpeek\\.review\\.(staged|unstaged|untracked)$/))",
+          "group": "navigation@3"
+        },
+        {
+          "command": "gitpeek.internal.file.copyRelativePath",
+          "when": "config.gitpeek.enabled && ((view == gitpeek.fileHistory && viewItem =~ /^gitpeek\\.history(Commit|File)$/) || (view == gitpeek.branchChanges && viewItem == gitpeek.branchFile) || (view == gitpeek.changes && viewItem =~ /^gitpeek\\.review\\.(staged|unstaged|untracked)$/))",
+          "group": "2_copy@2"
+        }
+      ],
+      "webview/context": [
+        {
+          "command": "gitpeek.internal.graph.commit",
+          "when": "config.gitpeek.enabled && webviewId == gitpeek.commitGraph && webviewSection == commit",
+          "group": "navigation@1"
+        },
+        {
+          "command": "gitpeek.internal.graph.copy",
+          "when": "config.gitpeek.enabled && webviewId == gitpeek.commitGraph && webviewSection == commit",
+          "group": "navigation@2"
+        },
+        {
+          "command": "gitpeek.internal.graph.checkout",
+          "when": "config.gitpeek.enabled && webviewId == gitpeek.commitGraph && webviewSection == commit",
+          "group": "2_modify@3"
+        },
+        {
+          "command": "gitpeek.internal.graph.cherryPick",
+          "when": "config.gitpeek.enabled && webviewId == gitpeek.commitGraph && webviewSection == commit",
+          "group": "2_modify@4"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "gitpeek.fileHistory",
+          "when": "config.gitpeek.enabled && resourceScheme == file && !explorerResourceIsFolder",
+          "group": "gitpeek@1"
+        },
+        {
+          "command": "gitpeek.compareWithBase",
+          "when": "config.gitpeek.enabled && resourceScheme == file && !explorerResourceIsFolder",
+          "group": "gitpeek@2"
         }
       ]
     },

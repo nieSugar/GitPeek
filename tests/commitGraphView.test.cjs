@@ -56,9 +56,13 @@ async function main() {
     const merge = { graph: '* ', hash: 'a'.repeat(40), parents: ['b'.repeat(40), 'c'.repeat(40)], subject: '<script>literal text</script>', author: '作者', refs: 'HEAD -> main, origin/main, tag: v1' };
     const root = { graph: '* ', hash: 'b'.repeat(40), parents: [], author: '作者' };
     const snapshot = { branch: 'main', rows: [merge, { graph: '|\\' }, { graph: '| * ', hash: 'c'.repeat(40), parents: [root.hash] }, { graph: '|/' }, root], hasMore: true };
-    receive({ data: { type: 'render', data: snapshot, cherryInProgress: true } });
+    receive({ data: { type: 'render', data: snapshot, cherryInProgress: true, repoId: 'graph-repo', generation: 7 } });
     assert.equal(elements.rows.children.length, 3, 'ASCII connector rows do not add gaps between commits');
     assert.equal(elements.rows.children[0].className, 'row current');
+    assert.deepEqual(JSON.parse(elements.rows.children[0].dataset.vscodeContext), {
+      webviewSection: 'commit', gitpeekCommitHash: merge.hash,
+      gitpeekGraphRepoId: 'graph-repo', gitpeekGraphGeneration: 7, preventDefaultContextMenuItems: true,
+    });
     assert.equal(elements.status.textContent, '已显示 3 条提交 · 可加载更多');
     assert.equal(elements.more.hidden, false);
     assert.equal(elements.cherryContinue.hidden, false);

@@ -240,6 +240,9 @@ export async function registerReviewChanges(
     vscode.workspace.registerTextDocumentContentProvider('gitpeek-review', content),
     vscode.commands.registerCommand('gitpeek.reviewChanges', (repo?: Repository) => show(repo)),
     vscode.commands.registerCommand(SHOW_DIFF, showDiff),
+    vscode.commands.registerCommand('gitpeek.internal.reviewChanges.openFromContext', (node?: ReviewNode) => {
+      if (node?.kind === 'file') return showDiff(node.repo, node.file.section, node.file.path);
+    }),
     vscode.window.onDidChangeActiveTextEditor(() => { void refreshActiveEditor(); }),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (!event.affectsConfiguration('gitpeek.enabled')) return;

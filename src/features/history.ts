@@ -2,22 +2,22 @@ import * as path from 'node:path';
 import type * as vscode from 'vscode';
 import type { GitService } from '../git/GitService';
 import type { RepositoryService } from '../git/RepositoryService';
-import type { CommitInfo, Repository } from '../git/types';
+import type { FileHistoryCommit, Repository } from '../git/types';
 import { isGitPeekEditor } from './virtualEditor';
 
 const DEFAULT_LIMIT = 20;
 const PAGE_SIZE = 20;
 const CACHE_TTL = 60_000;
 
-type ShowCommit = (repo: Repository, hash: string) => void | Promise<void>;
+type ShowDiff = (repo: Repository, hash: string, file: string) => void | Promise<void>;
 type HistoryItem = vscode.TreeItem;
 export interface HistoryPage {
-  commits: CommitInfo[];
+  commits: FileHistoryCommit[];
   hasMore: boolean;
 }
 
 export class FileHistoryService {
-  private readonly cache = new Map<string, { head: string; expires: number; limit: number; commits: CommitInfo[]; hasMore: boolean }>();
+  private readonly cache = new Map<string, { head: string; expires: number; limit: number; commits: FileHistoryCommit[]; hasMore: boolean }>();
   private readonly heads = new Map<string, string>();
   private readonly git: GitService;
 
@@ -78,7 +78,7 @@ export async function registerHistory(
   context: vscode.ExtensionContext,
   git: GitService,
   repositories: RepositoryService,
-  showCommit?: ShowCommit,
+  showDiff?: ShowDiff,
 ): Promise<HistoryFeature> {
   const vscode = await import('vscode');
   const service = new FileHistoryService(git);
@@ -139,8 +139,11 @@ export async function registerHistory(
       try {
         const page = await service.load(repo, file, limit);
         if (currentGeneration !== generation || uri !== activeUri) return [];
-        const rows: HistoryItem[] = [message(vscode, vscode.workspace.asRelativePath(uri, false))];
-        rows.push(...page.commits.map((commit) => commitItem(vscode, repo, commit, !!showCommit)));
+        const fileTarget = { repo, path: file };
+        const rows: HistoryItem[] = [Object.assign(message(vscode, vscode.workspace.asRelativePath(uri, false)), {
+          contextValue: 'gitpeek.historyFile', fileTarget,
+        })];
+        rows.push(...page.commits.map((commit) => Object.assign(commitItem(vscode, repo, commit, !!showDiff), { fileTarget })));
         if (!page.commits.length) rows.push(message(vscode, '此文件没有提交记录。'));
         else if (page.hasMore) rows.push(moreItem(vscode));
         return rows;
@@ -198,8 +201,8 @@ export async function registerHistory(
         refresh();
       }
     }),
-    vscode.commands.registerCommand('gitpeek.fileHistory', async () => {
-      const uri = vscode.window.activeTextEditor?.document.uri;
+    vscode.commands.registerCommand('gitpeek.fileHistory', async (target?: vscode.Uri) => {
+      const uri = target ?? vscode.window.activeTextEditor?.document.uri;
       if (!vscode.workspace.getConfiguration('gitpeek', uri).get<boolean>('enabled', true)) {
         await vscode.window.showInformationMessage('GitPeek：请在设置中启用扩展后再查看文件历史。');
         return;
@@ -217,8 +220,8 @@ export async function registerHistory(
       changed.fire(undefined);
     }),
   );
-  if (showCommit) context.subscriptions.push(
-    vscode.commands.registerCommand('gitpeek.internal.fileHistory.showCommit', (repo: Repository, hash: string) => showCommit(repo, hash)),
+  if (showDiff) context.subscriptions.push(
+    vscode.commands.registerCommand('gitpeek.internal.fileHistory.showDiff', (repo: Repository, hash: string, file: string) => showDiff(repo, hash, file)),
   );
 
   return { provider, show, refresh };
@@ -229,16 +232,17 @@ function message(vscode: typeof import('vscode'), label: string): HistoryItem {
   return item;
 }
 
-function commitItem(vscode: typeof import('vscode'), repo: Repository, commit: CommitInfo, canOpen: boolean): HistoryItem {
+function commitItem(vscode: typeof import('vscode'), repo: Repository, commit: FileHistoryCommit, canOpen: boolean): HistoryItem {
   const date = new Date(commit.date).toLocaleDateString('zh-CN');
   const item = new vscode.TreeItem(`${commit.subject}`, vscode.TreeItemCollapsibleState.None);
   item.description = `${commit.author} · ${date} · ${commit.shortHash}`;
   item.tooltip = `${commit.subject}\n${commit.author} · ${date}\n${commit.hash}`;
   item.iconPath = new vscode.ThemeIcon('git-commit');
+  item.contextValue = 'gitpeek.historyCommit';
   if (canOpen) item.command = {
-    command: 'gitpeek.internal.fileHistory.showCommit',
-    title: '查看提交',
-    arguments: [repo, commit.hash],
+    command: 'gitpeek.internal.fileHistory.showDiff',
+    title: '查看文件差异',
+    arguments: [repo, commit.hash, commit.filePath],
   };
   return item;
 }

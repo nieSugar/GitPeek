@@ -24,9 +24,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const graph = registerCommitGraph(context, git, repositories, commits.showCommit);
   const blame = new BlameController(git, repositories, commits);
   context.subscriptions.push(blame);
-  const history = await registerHistory(context, git, repositories, commits.showCommit);
+  const history = await registerHistory(context, git, repositories, commits.showDiff);
   const review = await registerReviewChanges(context, git, repositories);
-  const sidebar = registerSidebar(context, history, review.sidebar);
+  const sidebar = registerSidebar(context, history, review.sidebar, commits.showCommit);
   const branch = registerBranchCompare(context, git, repositories, commits.showCommit);
   await registerSelectionOrigins(context, git, repositories, commits.showCommit);
   const updateBranchViews = () => {

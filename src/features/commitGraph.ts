@@ -35,7 +35,7 @@ export function registerCommitGraph(
       const [data, cherryInProgress] = await Promise.all([loadGraph(git, target, limit), cherryPickInProgress(git, target)]);
       if (current !== generation || !panel || repo?.id !== target.id) return;
       snapshot = data;
-      void panel.webview.postMessage({ type: 'render', data, limit, cherryInProgress });
+      void panel.webview.postMessage({ type: 'render', data, limit, cherryInProgress, repoId: target.id, generation: current });
       void loadAvatars(target, data.branch).then(avatars => {
         if (current === generation && panel && repo?.id === target.id) {
           void panel.webview.postMessage({ type: 'avatars', avatars });
@@ -75,12 +75,13 @@ export function registerCommitGraph(
     panel.webview.html = graphHtml();
   };
 
-  const handleMessage = async (message: unknown): Promise<void> => {
+  const handleMessage = async (message: unknown, requestedAction?: string): Promise<void> => {
     if (!panel || !repo || !message || typeof message !== 'object') return;
     const action = (message as { type?: unknown }).type;
     if (action === 'ready') { ready = true; await refresh(); return; }
     if (action === 'refresh') { await refresh(); return; }
     if (action === 'loadMore') { limit = Math.min(500, limit + 100); await refresh(); return; }
+    if (!vscode.workspace.getConfiguration('gitpeek').get<boolean>('enabled', true)) return;
     if (action === 'commit') {
       const hash = (message as { hash?: unknown }).hash;
       if (typeof hash === 'string' && snapshot?.rows.some(row => row.hash === hash)) await showCommit(repo, hash);
@@ -93,21 +94,23 @@ export function registerCommitGraph(
       const targetGeneration = generation;
       const valid = (): boolean => Boolean(panel && targetRepo && repo?.id === targetRepo.id && snapshot === targetSnapshot && generation === targetGeneration && typeof hash === 'string' && snapshot?.rows.some(row => row.hash === hash));
       if (!valid()) return;
-      let selectedAction: string | undefined;
+      let selectedAction = requestedAction;
       try {
-        const selected = await vscode.window.showQuickPick([
-          { label: '复制完整 Hash', action: 'copy' },
-          { label: '检出此提交', action: 'checkout' },
-          { label: 'Cherry-pick 到当前分支', action: 'cherryPick' },
-        ], {
-          title: `GitPeek：提交 ${String(hash).slice(0, 7)}`, placeHolder: '选择提交操作',
-        });
-        if (!selected || !valid()) return;
-        selectedAction = selected.action;
-        if (selected.action === 'copy') {
+        if (!selectedAction) {
+          const selected = await vscode.window.showQuickPick([
+            { label: '复制完整 Hash', action: 'copy' },
+            { label: '检出此提交', action: 'checkout' },
+            { label: 'Cherry-pick 到当前分支', action: 'cherryPick' },
+          ], {
+            title: `GitPeek：提交 ${String(hash).slice(0, 7)}`, placeHolder: '选择提交操作',
+          });
+          selectedAction = selected?.action;
+        }
+        if (!selectedAction || !valid()) return;
+        if (selectedAction === 'copy') {
           await vscode.env.clipboard.writeText(hash as string);
           if (valid()) await vscode.window.showInformationMessage('GitPeek：已复制完整 Commit Hash。');
-        } else if (selected.action === 'checkout') {
+        } else if (selectedAction === 'checkout') {
           const confirmed = await vscode.window.showWarningMessage(
             `检出提交 ${String(hash).slice(0, 7)} 并进入分离 HEAD 状态？工作区必须干净。`,
             { modal: true }, '检出',
@@ -116,7 +119,7 @@ export function registerCommitGraph(
           await checkoutCommit(git, targetRepo, hash as string);
           await vscode.commands.executeCommand('gitpeek.refresh');
           await refresh();
-        } else if (selected.action === 'cherryPick') {
+        } else if (selectedAction === 'cherryPick') {
           if (!targetSnapshot?.branch) throw new Error('分离 HEAD 状态下不能 Cherry-pick。');
           const confirmed = await vscode.window.showWarningMessage(
             `将提交 ${String(hash).slice(0, 7)} Cherry-pick 到“${targetSnapshot.branch}”？工作区必须干净。`,
@@ -218,6 +221,14 @@ export function registerCommitGraph(
   };
 
   context.subscriptions.push(vscode.commands.registerCommand('gitpeek.showCommitGraph', show));
+  for (const action of ['commit', 'copy', 'checkout', 'cherryPick']) {
+    context.subscriptions.push(vscode.commands.registerCommand(`gitpeek.internal.graph.${action}`, (value: unknown) => {
+      if (!value || typeof value !== 'object') return;
+      const target = value as Record<string, unknown>;
+      if (target.gitpeekGraphRepoId !== repo?.id || target.gitpeekGraphGeneration !== generation) return;
+      return handleMessage({ type: action === 'commit' ? 'commit' : 'actions', hash: target.gitpeekCommitHash }, action);
+    }));
+  }
   return { refresh };
 }
 
@@ -254,11 +265,11 @@ header{flex:none;padding:18px 24px 12px;border-bottom:1px solid var(--vscode-pan
 </style></head><body>
 <header><div class="toolbar"><div class="context"><h1>提交图</h1><button class="branch-button" data-action="switch" title="切换本地分支" aria-label="切换分支"><svg width="14" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="4" cy="3" r="2"/><circle cx="12" cy="4" r="2"/><circle cx="4" cy="13" r="2"/><path d="M4 5v6m8-5c0 4-8 1-8 5"/></svg><span id="branch">读取分支…</span></button></div>
 <div class="actions"><button data-action="create">＋ 新建分支</button><button data-action="merge">合并分支</button><button class="cherry" data-action="cherryContinue" hidden>继续 Cherry-pick</button><button class="cherry" data-action="cherryAbort" hidden>中止 Cherry-pick</button><button class="refresh" data-action="refresh"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M13 6a5 5 0 1 0 0 5M13 2v4H9"/></svg>刷新</button></div></div>
-<div class="summary"><span id="status" role="status" aria-live="polite">正在加载…</span><span class="hint">点击提交查看详情 · 悬停显示更多操作</span></div></header>
+<div class="summary"><span id="status" role="status" aria-live="polite">正在加载…</span><span class="hint">点击提交查看详情 · 右键打开提交操作</span></div></header>
 <main class="history" aria-label="提交历史"><div class="columns" aria-hidden="true"><span>提交线</span><span>提交信息</span><span>作者</span><span>日期</span><span>Commit</span></div><div id="rows"></div><button id="more" data-action="loadMore" hidden>加载更多提交</button></main>
 <script nonce="${nonce}">
 const vscode=acquireVsCodeApi(), rows=document.getElementById('rows'), status=document.getElementById('status'), more=document.getElementById('more');
-const colors=['blue','orange','green','purple','red','yellow'].map(name=>'var(--vscode-charts-'+name+', var(--vscode-textLink-foreground))');let data,avatars={};
+const colors=['blue','orange','green','purple','red','yellow'].map(name=>'var(--vscode-charts-'+name+', var(--vscode-textLink-foreground))');let data,avatars={},repoId,generation;
 function svgElement(name,attributes){const element=document.createElementNS('http://www.w3.org/2000/svg',name);for(const [key,value] of Object.entries(attributes))element.setAttribute(key,String(value));return element}
 function graphCells(commits){
   const cells=[];let lanes=[],nextColor=0,maxLanes=1;
@@ -292,6 +303,7 @@ function draw(){
   let count=0;
   for(const row of commits){
     const item=document.createElement('div');item.className='row'+(isHead(row)?' current':'');
+    item.dataset.vscodeContext=JSON.stringify({webviewSection:'commit',gitpeekCommitHash:row.hash,gitpeekGraphRepoId:repoId,gitpeekGraphGeneration:generation,preventDefaultContextMenuItems:true});
     const graph=cells[count++];
     const detail=document.createElement('button');detail.type='button';detail.className='commit';detail.dataset.hash=row.hash;
     detail.setAttribute('aria-label',(row.subject||'')+'，作者 '+(row.author||'')+'，'+row.hash+(row.refs?'，'+row.refs:''));
@@ -321,7 +333,7 @@ function draw(){
   more.hidden=!data.hasMore;
 }
 document.addEventListener('click',event=>{const action=event.target.closest('[data-action]');if(action){vscode.postMessage({type:action.dataset.action});return}const commitActions=event.target.closest('[data-actions-hash]');if(commitActions){vscode.postMessage({type:'actions',hash:commitActions.dataset.actionsHash});return}const commit=event.target.closest('[data-hash]');if(commit)vscode.postMessage({type:'commit',hash:commit.dataset.hash})});
-window.addEventListener('message',event=>{const message=event.data;if(message.type==='loading')status.textContent='正在加载…';else if(message.type==='error')status.textContent=message.message;else if(message.type==='render'){data=message.data;for(const action of ['cherryContinue','cherryAbort'])document.querySelector('[data-action="'+action+'"]').hidden=!message.cherryInProgress;draw()}else if(message.type==='avatars'){avatars=message.avatars||{};draw()}});
+window.addEventListener('message',event=>{const message=event.data;if(message.type==='loading')status.textContent='正在加载…';else if(message.type==='error')status.textContent=message.message;else if(message.type==='render'){data=message.data;repoId=message.repoId;generation=message.generation;for(const action of ['cherryContinue','cherryAbort'])document.querySelector('[data-action="'+action+'"]').hidden=!message.cherryInProgress;draw()}else if(message.type==='avatars'){avatars=message.avatars||{};draw()}});
 vscode.postMessage({type:'ready'});
 </script></body></html>`;
 }

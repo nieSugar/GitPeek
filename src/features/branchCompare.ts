@@ -343,7 +343,12 @@ export function registerBranchCompare(
     } else if (event.affectsConfiguration('gitpeek.baseBranch') && enabled()) void refresh()
   })
   context.subscriptions.push(onActiveEditor, onConfiguration,
-    vscode.commands.registerCommand('gitpeek.compareWithBase', () => show()),
+    vscode.commands.registerCommand('gitpeek.compareWithBase', async (uri?: vscode.Uri) => {
+      if (!uri) return show()
+      const repo = await repositories.forUri(uri)
+      if (repo) await show(repo)
+      else await vscode.window.showInformationMessage('GitPeek：此文件不属于任何 Git 仓库。')
+    }),
     vscode.commands.registerCommand('gitpeek.showBranchChanges', () => show()),
     vscode.commands.registerCommand('gitpeek.internal.branch.showCommit', (repo: Repository, hash: string) => showCommit(repo, hash)),
     vscode.commands.registerCommand('gitpeek.internal.branch.openDiff', (summary: BranchCompareSummary, file: FileChange) => openDiff(summary, file)),
@@ -366,13 +371,15 @@ export function registerBranchCompare(
       ...summary.commits.map((commit) => {
         const item = treeItem(`${commit.shortHash} ${commit.subject}`, `${commit.author} · ${new Date(commit.date).toLocaleDateString('zh-CN')}`)
         item.command = { command: 'gitpeek.internal.branch.showCommit', title: '查看提交', arguments: [summary.repo, commit.hash] }
+        item.contextValue = 'gitpeek.branchCommit'
         return item
       }),
       treeItem(`文件 (${summary.files.length}) · +${summary.additions} −${summary.deletions}`),
       ...summary.files.map((file) => {
         const item = treeItem(`${statusLabel(file.status)} ${file.path}`, `+${file.additions ?? 0} −${file.deletions ?? 0}`)
         item.command = { command: 'gitpeek.internal.branch.openDiff', title: '打开差异', arguments: [summary, file] }
-        return item
+        item.contextValue = 'gitpeek.branchFile'
+        return Object.assign(item, { fileTarget: { repo: summary.repo, path: file.path } })
       }),
     ]
   }

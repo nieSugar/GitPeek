@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { BlameInfo, BranchComparison, CommitDetail, CommitInfo, FileChange, GitStatus, Repository } from './types'
-import { parseBlame, parseLog, parseNameStatus, parseNumStat, parseStatus } from './GitParser'
+import { BlameInfo, BranchComparison, CommitDetail, FileHistoryCommit, FileChange, GitStatus, Repository } from './types'
+import { parseBlame, parseFileHistory, parseLog, parseNameStatus, parseNumStat, parseStatus } from './GitParser'
 
 const execFileAsync = promisify(execFile)
 const DEFAULT_TIMEOUT_MS = 5000
@@ -37,8 +37,8 @@ export class GitService {
     return parseBlame(await this.run(repo, ['-c', 'core.quotePath=false', 'blame', '--line-porcelain', '-L', `${startLine},${endLine}`, '--', file]))
   }
 
-  async history(repo: Repository, file: string, limit = 20): Promise<CommitInfo[]> {
-    return parseLog(await this.run(repo, ['log', '--follow', '-z', `--max-count=${Math.max(1, Math.floor(limit))}`, '--date=iso-strict', '--pretty=format:%H%x1f%an%x1f%ae%x1f%ad%x1f%s%x00', '--', file]))
+  async history(repo: Repository, file: string, limit = 20): Promise<FileHistoryCommit[]> {
+    return parseFileHistory(await this.run(repo, ['log', '--follow', '--name-only', '-z', `--max-count=${Math.max(1, Math.floor(limit))}`, '--date=iso-strict', '--pretty=format:%H%x1f%an%x1f%ae%x1f%ad%x1f%s%x00', '--', `:(literal)${file}`]))
   }
 
   async commit(repo: Repository, hash: string): Promise<CommitDetail> {

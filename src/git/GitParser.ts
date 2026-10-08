@@ -1,4 +1,4 @@
-import { BlameInfo, CommitInfo, FileChange, GitStatus } from './types'
+import { BlameInfo, CommitInfo, FileChange, FileHistoryCommit, GitStatus } from './types'
 
 export function parseNameStatus(output: string): FileChange[] {
   const fields = output.split('\0')
@@ -45,6 +45,16 @@ export function parseLog(output: string): CommitInfo[] {
     const [hash, author, email, date, ...subject] = record.split('\x1f')
     return { hash, shortHash: hash.slice(0, 7), author, ...(email ? { email } : {}), date: Date.parse(date), subject: subject.join('\x1f') }
   }).filter((commit) => commit.hash && Number.isFinite(commit.date))
+}
+
+export function parseFileHistory(output: string): FileHistoryCommit[] {
+  return output.split('\0\0').flatMap((record) => {
+    const [metadata, name] = record.split('\0')
+    const [commit] = parseLog(metadata)
+    // Git inserts one newline between the commit metadata and the raw filename.
+    const filePath = name?.replace(/^\n/, '')
+    return commit && filePath ? [{ ...commit, filePath }] : []
+  })
 }
 
 export function parseStatus(output: string): GitStatus {

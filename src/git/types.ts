@@ -12,6 +12,10 @@ export interface CommitInfo {
   subject: string
 }
 
+export interface FileHistoryCommit extends CommitInfo {
+  filePath: string
+}
+
 export interface BlameInfo {
   hash: string
   filename?: string

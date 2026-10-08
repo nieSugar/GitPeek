@@ -4,6 +4,7 @@ const { execFileSync } = require('node:child_process');
 const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
+const Module = require('node:module');
 const esbuild = require('esbuild');
 
 function git(cwd, ...args) {
@@ -79,9 +80,86 @@ async function main() {
     const merge = await loadCommitDetail(gitService, repo, mergeHash);
     assert.deepEqual(merge.files.map((file) => file.path), ['side.txt']);
     assert.equal((await loadCommitDiffContents(gitService, repo, merge, 'side.txt')).newContent, 'side\n');
+    await checkHistoryClicks(temp, gitService, repo);
     console.log('Commit detail integration passed (root, binary, added, deleted, rename, merge first-parent, invalid path).');
   } finally {
     rmSync(temp, { recursive: true, force: true });
+  }
+}
+
+async function checkHistoryClicks(temp, gitService, repo) {
+  writeFileSync(join(repo.root, 'renamed name.txt'), 'after\n', 'utf8');
+  writeFileSync(join(repo.root, 'added.txt'), 'unrelated change\n', 'utf8');
+  git(repo.root, 'add', '--all');
+  git(repo.root, 'commit', '-m', 'modify multiple files');
+  const currentFile = '最终 [name].txt';
+  git(repo.root, 'mv', 'renamed name.txt', currentFile);
+  git(repo.root, 'commit', '-m', 'rename again');
+
+  const commands = new Map();
+  const diffs = [];
+  const disposable = { dispose() {} };
+  const uri = (fields) => ({ ...fields, toString() { return JSON.stringify(fields); } });
+  let contentProvider, changeEditor;
+  const vscode = {
+    EventEmitter: class { event = () => disposable; fire() {} dispose() {} },
+    TreeItem: class { constructor(label) { this.label = label; } },
+    ThemeIcon: class {}, RelativePattern: class {}, TreeItemCollapsibleState: { None: 0 },
+    Uri: { file: (fsPath) => uri({ scheme: 'file', fsPath }), from: uri },
+    window: {
+      activeTextEditor: { document: { uri: uri({ scheme: 'file', fsPath: join(repo.root, currentFile) }) } },
+      onDidChangeActiveTextEditor: (handler) => (changeEditor = handler, disposable),
+      onDidChangeWindowState: () => disposable,
+      showQuickPick: async () => assert.fail('file history must open the diff without a file picker'),
+      showErrorMessage: async (message) => assert.fail(message),
+    },
+    workspace: {
+      getConfiguration: () => ({ get: (_key, fallback) => fallback }),
+      asRelativePath: (uri) => uri.fsPath,
+      createFileSystemWatcher: () => ({ ...disposable, onDidChange() {}, onDidCreate() {}, onDidDelete() {} }),
+      onDidSaveTextDocument: () => disposable,
+      onDidChangeConfiguration: () => disposable,
+      registerTextDocumentContentProvider: (_scheme, provider) => (contentProvider = provider, disposable),
+    },
+    commands: {
+      registerCommand: (name, callback) => (commands.set(name, callback), disposable),
+      executeCommand: async (name, ...args) => {
+        assert.equal(name, 'vscode.diff');
+        diffs.push(args);
+        changeEditor({ document: { uri: args[1] } });
+      },
+    },
+  };
+  const outdir = join(temp, 'history-ui');
+  await esbuild.build({ entryPoints: ['history', 'commitDetail'].map((name) => join(__dirname, '..', 'src', 'features', `${name}.ts`)), bundle: true, platform: 'node', format: 'cjs', supported: { 'dynamic-import': false }, external: ['vscode'], outdir, outExtension: { '.js': '.cjs' } });
+  const originalLoad = Module._load;
+  const context = { subscriptions: [] };
+  try {
+    Module._load = function (request, parent, isMain) {
+      return request === 'vscode' ? vscode : originalLoad.call(this, request, parent, isMain);
+    };
+    const { registerHistory } = require(join(outdir, 'history.cjs'));
+    const { registerCommitFeatures } = require(join(outdir, 'commitDetail.cjs'));
+    const commits = registerCommitFeatures(context, gitService);
+    const history = await registerHistory(context, gitService, { forUri: async () => repo }, commits.showDiff);
+    const rows = (await history.provider.getChildren()).filter((row) => row.command);
+    assert.equal(rows.length, 4);
+    assert.deepEqual(rows.map((row) => row.command.arguments[2]), [currentFile, 'renamed name.txt', 'renamed name.txt', 'before name.txt']);
+    const expected = [['after\n', 'after\n'], ['before\n', 'after\n'], ['before\n', 'before\n'], ['', 'before\n']];
+    for (const [index, row] of rows.entries()) {
+      const { command, arguments: args } = row.command;
+      await commands.get(command)(...args);
+      assert.equal(diffs.length, index + 1);
+      const [before, after] = diffs.at(-1);
+      assert.equal(await contentProvider.provideTextDocumentContent(before), expected[index][0]);
+      assert.equal(await contentProvider.provideTextDocumentContent(after), expected[index][1]);
+      assert.equal(JSON.parse(after.query).file, args[2]);
+    }
+    assert.equal((await history.provider.getChildren()).length, rows.length + 1, 'diff editors preserve the current file history');
+    console.log('File history clicks passed (multi-file commit, modification, two renames, root commit, preserved context, no picker).');
+  } finally {
+    Module._load = originalLoad;
+    for (const subscription of context.subscriptions) subscription.dispose();
   }
 }
 

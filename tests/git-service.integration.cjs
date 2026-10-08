@@ -71,6 +71,8 @@ async function main() {
 
     const history = await service.history(repoA, "目录 & 'quote'/改名.txt")
     assert.deepEqual(history.map((item) => item.subject), ['rename', 'initial'])
+    assert.deepEqual(history.map((item) => item.filePath), ["目录 & 'quote'/改名.txt", "目录 & 'quote'/空 格.txt"])
+    assert.deepEqual(await service.history(repoA, "目录 & 'quote'/改名.txt", 1), history.slice(0, 1))
     const detail = await service.commit(repoA, 'HEAD')
     assert.equal(detail.files[0].status, 'R')
     assert.equal(detail.files[0].oldPath, "目录 & 'quote'/空 格.txt")
