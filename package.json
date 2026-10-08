@@ -25,7 +25,7 @@
     "build": "npm run compile",
     "watch": "node esbuild.js --watch",
     "check": "tsc --noEmit",
-    "test": "node --test tests/git-service.integration.cjs tests/blame.test.cjs tests/virtualEditor.test.cjs tests/fileHistory.test.mjs tests/commitGraph.integration.cjs tests/commitGraphView.test.cjs tests/checkoutCommit.integration.cjs tests/cherryPickCommit.integration.cjs tests/stashList.integration.cjs tests/stashSave.integration.cjs tests/stashApply.integration.cjs tests/stashDrop.integration.cjs tests/commit-detail.integration.cjs tests/branchCompare.integration.cjs tests/selectionOrigins.integration.cjs tests/reviewChanges.integration.cjs tests/smartCommit.test.mjs tests/contextMenus.test.cjs tests/search-regressions.test.cjs tests/detailsCompare.regressions.cjs",
+    "test": "node --test tests/git-service.integration.cjs tests/blame.test.cjs tests/virtualEditor.test.cjs tests/fileHistory.test.mjs tests/commitGraph.integration.cjs tests/commitGraphView.test.cjs tests/checkoutCommit.integration.cjs tests/cherryPickCommit.integration.cjs tests/stashList.integration.cjs tests/stashSave.integration.cjs tests/stashApply.integration.cjs tests/stashDrop.integration.cjs tests/commit-detail.integration.cjs tests/branchCompare.integration.cjs tests/selectionOrigins.integration.cjs tests/reviewChanges.integration.cjs tests/smartCommit.test.mjs tests/contextMenus.test.cjs tests/workflows.integration.cjs tests/detailsCompare.regressions.cjs tests/historyStage.regressions.cjs tests/search-regressions.test.cjs",
     "package": "npm run check && npm run compile && vsce package --no-dependencies"
   },
   "devDependencies": {
@@ -183,6 +183,20 @@
         "title": "与工作区文件比较",
         "category": "GitPeek",
         "enablement": "config.gitpeek.enabled"
+      },
+      {
+        "command": "gitpeek.internal.reviewChanges.stage",
+        "title": "暂存文件",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled",
+        "icon": "$(add)"
+      },
+      {
+        "command": "gitpeek.internal.reviewChanges.unstage",
+        "title": "取消暂存",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled",
+        "icon": "$(remove)"
       },
       {
         "command": "gitpeek.internal.graph.selectCompare",
@@ -362,6 +376,14 @@
           "when": "false"
         },
         {
+          "command": "gitpeek.internal.reviewChanges.stage",
+          "when": "false"
+        },
+        {
+          "command": "gitpeek.internal.reviewChanges.unstage",
+          "when": "false"
+        },
+        {
           "command": "gitpeek.internal.graph.selectCompare",
           "when": "false"
         },
@@ -415,6 +437,16 @@
           "command": "gitpeek.internal.compare.working",
           "when": "config.gitpeek.enabled && ((view == gitpeek.fileHistory && viewItem == gitpeek.historyCommit) || (view == gitpeek.commitDetails && viewItem == gitpeek.detailFile))",
           "group": "3_compare@3"
+        },
+        {
+          "command": "gitpeek.internal.reviewChanges.stage",
+          "when": "config.gitpeek.enabled && view == gitpeek.changes && (viewItem == gitpeek.review.unstaged || viewItem == gitpeek.review.untracked)",
+          "group": "1_modify@1"
+        },
+        {
+          "command": "gitpeek.internal.reviewChanges.unstage",
+          "when": "config.gitpeek.enabled && view == gitpeek.changes && viewItem == gitpeek.review.staged",
+          "group": "1_modify@1"
         }
       ],
       "webview/context": [

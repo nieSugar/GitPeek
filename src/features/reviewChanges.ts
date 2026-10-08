@@ -1,10 +1,12 @@
 import * as vscode from 'vscode';
-import { isAbsolute, relative, sep } from 'node:path';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import type { GitService } from '../git/GitService';
 import type { RepositoryService } from '../git/RepositoryService';
 import type { Repository } from '../git/types';
 import { loadReviewDiff, loadReviewSnapshot, type ReviewFile, type ReviewSection, type ReviewSnapshot } from './reviewChangesData';
 import { isGitPeekEditor } from './virtualEditor';
+import { updateFileStage } from './stageFile';
+import { samePath } from './smartCommit';
 
 const SHOW_DIFF = 'gitpeek.internal.reviewChanges.showDiff';
 type SectionNode = { kind: 'section'; snapshot: ReviewSnapshot; section: ReviewSection };
@@ -84,6 +86,7 @@ export async function registerReviewChanges(
   let currentRepo: Repository | undefined;
   let refreshGeneration = 0;
   const content = new ReviewContentProvider();
+  const modifying = new Set<string>();
 
   const resolveRepo = async (repo?: Repository): Promise<Repository | undefined> => {
     if (repo) return repo;
@@ -253,6 +256,27 @@ export async function registerReviewChanges(
       if (currentRepo && isInside(currentRepo.root, document.uri.fsPath)) void refresh(currentRepo).catch(() => undefined);
     }),
   );
+
+  for (const stage of [true, false]) context.subscriptions.push(vscode.commands.registerCommand(
+    `gitpeek.internal.reviewChanges.${stage ? 'stage' : 'unstage'}`, async (node?: ReviewNode) => {
+      if (!enabled() || node?.kind !== 'file' || modifying.has(node.repo.id)) return;
+      const paths = [node.file.path, node.file.oldPath].filter((file): file is string => !!file).map(file => resolve(node.repo.root, file));
+      const hasUnsavedChanges = () => vscode.workspace.textDocuments.some(doc => doc.uri.scheme === 'file' && doc.isDirty && paths.some(path => samePath(path, doc.uri.fsPath)));
+      if (hasUnsavedChanges()) {
+        await vscode.window.showWarningMessage('文件有未保存修改，请先保存再暂存或取消暂存。'); return;
+      }
+      modifying.add(node.repo.id);
+      try {
+        await updateFileStage(git, node.repo, node.file, stage, () => {
+          if (!enabled()) throw new Error('更改审查已禁用，请启用后重试。');
+          if (hasUnsavedChanges()) throw new Error('文件有未保存修改，请先保存再暂存或取消暂存。');
+        });
+        await refresh(node.repo);
+        await vscode.commands.executeCommand('gitpeek.refresh');
+      } catch (error) { await vscode.window.showErrorMessage(`GitPeek：${stage ? '暂存' : '取消暂存'}失败：${errorText(error)}`); }
+      finally { modifying.delete(node.repo.id); }
+    },
+  ));
 
   void refreshActiveEditor();
 
