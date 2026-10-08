@@ -5,7 +5,7 @@ import type { RepositoryService } from '../git/RepositoryService';
 import type { Repository } from '../git/types';
 import { loadReviewDiff, loadReviewSnapshot, type ReviewFile, type ReviewSection, type ReviewSnapshot } from './reviewChangesData';
 import { isGitPeekEditor } from './virtualEditor';
-import { updateFileStage } from './stageFile';
+import { updateFilesStage } from './stageFile';
 import { samePath } from './smartCommit';
 
 const SHOW_DIFF = 'gitpeek.internal.reviewChanges.showDiff';
@@ -57,6 +57,7 @@ class ReviewSidebar implements vscode.TreeDataProvider<ReviewNode> {
       const item = new vscode.TreeItem(sectionTitle(element.section, group.files.length), vscode.TreeItemCollapsibleState.Expanded);
       item.id = `${element.snapshot.repo.id}:${element.section}`;
       item.description = `+${group.additions} −${group.deletions}`;
+      item.contextValue = group.files.length ? `gitpeek.reviewGroup.${element.section}` : 'gitpeek.reviewGroup.empty';
       return item;
     }
     const { file, repo } = element;
@@ -105,9 +106,10 @@ export async function registerReviewChanges(
 
   const refresh = async (repo?: Repository): Promise<ReviewSnapshot | undefined> => {
     if (!enabled()) { clearDisabled(); return undefined; }
-    const target = await resolveRepo(repo);
-    if (!enabled()) { clearDisabled(); return undefined; }
     const generation = ++refreshGeneration;
+    const target = await resolveRepo(repo);
+    if (generation !== refreshGeneration) return undefined;
+    if (!enabled()) { clearDisabled(); return undefined; }
     currentRepo = target;
     if (!target) {
       sidebar.setSnapshot(undefined);
@@ -116,7 +118,7 @@ export async function registerReviewChanges(
     }
     try {
       const snapshot = await loadReviewSnapshot(git, target);
-      if (generation !== refreshGeneration || currentRepo?.id !== target.id) return sidebar.getData();
+      if (generation !== refreshGeneration || currentRepo?.id !== target.id) return undefined;
       sidebar.setSnapshot(snapshot);
       statusBar.text = `$(git-compare) ${snapshot.fileCount} 个文件已更改`;
       statusBar.show();
@@ -257,26 +259,48 @@ export async function registerReviewChanges(
     }),
   );
 
-  for (const stage of [true, false]) context.subscriptions.push(vscode.commands.registerCommand(
-    `gitpeek.internal.reviewChanges.${stage ? 'stage' : 'unstage'}`, async (node?: ReviewNode) => {
-      if (!enabled() || node?.kind !== 'file' || modifying.has(node.repo.id)) return;
-      const paths = [node.file.path, node.file.oldPath].filter((file): file is string => !!file).map(file => resolve(node.repo.root, file));
-      const hasUnsavedChanges = () => vscode.workspace.textDocuments.some(doc => doc.uri.scheme === 'file' && doc.isDirty && paths.some(path => samePath(path, doc.uri.fsPath)));
-      if (hasUnsavedChanges()) {
-        await vscode.window.showWarningMessage('文件有未保存修改，请先保存再暂存或取消暂存。'); return;
-      }
-      modifying.add(node.repo.id);
-      try {
-        await updateFileStage(git, node.repo, node.file, stage, () => {
-          if (!enabled()) throw new Error('更改审查已禁用，请启用后重试。');
-          if (hasUnsavedChanges()) throw new Error('文件有未保存修改，请先保存再暂存或取消暂存。');
-        });
-        await refresh(node.repo);
-        await vscode.commands.executeCommand('gitpeek.refresh');
-      } catch (error) { await vscode.window.showErrorMessage(`GitPeek：${stage ? '暂存' : '取消暂存'}失败：${errorText(error)}`); }
-      finally { modifying.delete(node.repo.id); }
-    },
-  ));
+  const applyStage = async (nodes: readonly ReviewNode[], stage: boolean): Promise<void> => {
+    if (!enabled() || !nodes.length) return;
+    const first = nodes[0];
+    if (first.kind !== 'file') { await vscode.window.showInformationMessage('请只选择同一仓库的文件；分组操作请使用分组菜单。'); return; }
+    const repo = first.repo;
+    if (modifying.has(repo.id)) return;
+    if (nodes.some(node => node.kind !== 'file' || node.repo.id !== repo.id || !samePath(node.repo.root, repo.root)
+      || (stage ? node.file.section === 'staged' : node.file.section !== 'staged'))) {
+      await vscode.window.showWarningMessage(stage ? '请只选择同一仓库的未暂存或未跟踪文件。' : '请只选择同一仓库的已暂存文件。'); return;
+    }
+    const files = (nodes as FileNode[]).map(node => node.file);
+    const paths = files.flatMap(file => [file.path, file.oldPath].filter((file): file is string => !!file).map(file => resolve(repo.root, file)));
+    const hasUnsavedChanges = () => vscode.workspace.textDocuments.some(doc => doc.uri.scheme === 'file' && doc.isDirty && paths.some(path => samePath(path, doc.uri.fsPath)));
+    if (hasUnsavedChanges()) {
+      await vscode.window.showWarningMessage('所选文件中有未保存修改，请先保存再暂存或取消暂存。'); return;
+    }
+    modifying.add(repo.id);
+    try {
+      await updateFilesStage(git, repo, files, stage, () => {
+        if (!enabled()) throw new Error('更改审查已禁用，请启用后重试。');
+        if (hasUnsavedChanges()) throw new Error('所选文件中有未保存修改，请先保存再暂存或取消暂存。');
+      });
+      const stillVisible = currentRepo?.id === repo.id && samePath(currentRepo.root, repo.root);
+      if (stillVisible) await refresh(repo);
+      await vscode.commands.executeCommand('gitpeek.refresh', stillVisible ? repo : undefined);
+    } catch (error) { await vscode.window.showErrorMessage(`GitPeek：${stage ? '暂存' : '取消暂存'}失败：${errorText(error)}`); }
+    finally { modifying.delete(repo.id); }
+  };
+  for (const stage of [true, false]) context.subscriptions.push(
+    vscode.commands.registerCommand(`gitpeek.internal.reviewChanges.${stage ? 'stage' : 'unstage'}`, (node?: ReviewNode, selected?: readonly ReviewNode[]) => {
+      if (node?.kind !== 'file') return;
+      return applyStage(selected?.length ? selected : [node], stage);
+    }),
+    vscode.commands.registerCommand(`gitpeek.internal.reviewChanges.${stage ? 'stageGroup' : 'unstageGroup'}`, async (node?: ReviewNode) => {
+      if (!enabled() || node?.kind !== 'section') return;
+      if (node.snapshot !== sidebar.getData()) { await vscode.window.showInformationMessage('更改列表已刷新，请重新选择分组。'); return; }
+      if (stage === (node.section === 'staged')) { await vscode.window.showInformationMessage('请选择与此操作对应的文件分组。'); return; }
+      const files = node.snapshot.groups.find(group => group.section === node.section)?.files ?? [];
+      if (!files.length) { await vscode.window.showInformationMessage('此分组没有需要处理的文件。'); return; }
+      await applyStage(files.map(file => ({ kind: 'file', repo: node.snapshot.repo, file })), stage);
+    }),
+  );
 
   void refreshActiveEditor();
 

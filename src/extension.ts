@@ -14,6 +14,7 @@ import { generateCommitMessage } from './features/smartCommit';
 import { registerStashFeatures } from './features/stashFeature';
 import { registerRevisionCompare } from './features/revisionCompare';
 import { registerSelectionHistory } from './features/selectionHistory';
+import type { Repository } from './git/types';
 
 const output = vscode.window.createOutputChannel('GitPeek');
 
@@ -44,12 +45,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
   context.subscriptions.push(branch.onDidChange(updateBranchViews));
   updateBranchViews();
-  const refresh = vscode.commands.registerCommand('gitpeek.refresh', () => {
+  const refresh = vscode.commands.registerCommand('gitpeek.refresh', (target?: Repository) => {
+    const repo = typeof target?.root === 'string' && typeof target.id === 'string' ? target : undefined;
     repositories.clearCache();
     blame.refresh();
     sidebar.refresh();
     void branch.refresh();
-    void review.refresh().catch(() => undefined);
+    void review.refresh(repo).catch(() => undefined);
     void graph.refresh();
     output.appendLine(`[${new Date().toISOString()}] 已请求刷新`);
   });
