@@ -130,7 +130,7 @@ function conventionalScope(value: string): string {
   return value.replace(/[^\p{L}\p{N}._-]+/gu, '-').replace(/^-+|-+$/g, '');
 }
 
-function samePath(left: string, right: string): boolean {
+export function samePath(left: string, right: string): boolean {
   const normalize = (path: string) => {
     const normalized = path.replace(/[\\/]+$/, '').replaceAll('\\', '/');
     return process.platform === 'win32' ? normalized.toLowerCase() : normalized;

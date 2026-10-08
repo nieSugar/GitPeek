@@ -75,7 +75,7 @@ async function main() {
         executeCommand: async (name, ...args) => commands.has(name) ? commands.get(name)(...args) : opened.push([name, ...args]),
       },
     };
-    const names = ['commitGraph', 'history', 'sidebar', 'branchCompare', 'reviewChanges', 'commitDetail'];
+    const names = ['commitGraph', 'history', 'sidebar', 'branchCompare', 'reviewChanges', 'commitDetail', 'revisionCompare'];
     await esbuild.build({ entryPoints: [...names.map(name => path.join(__dirname, '..', 'src', 'features', `${name}.ts`)), path.join(__dirname, '..', 'src', 'git', 'GitService.ts')], bundle: true, platform: 'node', format: 'cjs', supported: { 'dynamic-import': false }, external: ['vscode'], outdir: temp, outExtension: { '.js': '.cjs' } });
     Module._load = function (request, parent, isMain) { return request === 'vscode' ? vscode : originalLoad.call(this, request, parent, isMain); };
     const { GitService } = require(path.join(temp, 'git', 'GitService.cjs'));
@@ -87,6 +87,7 @@ async function main() {
     };
     const context = { subscriptions };
     feature('commitDetail').registerCommitFeatures(context, service);
+    feature('revisionCompare').registerRevisionCompare(context, service);
     const showCommit = async (...args) => shown.push(args);
     const graph = feature('commitGraph').registerCommitGraph(context, service, repositories, showCommit);
     const history = await feature('history').registerHistory(context, service, repositories, async (...args) => opened.push(['historyDiff', ...args]));
@@ -233,7 +234,7 @@ async function main() {
       assert.ok(contributes.menus.commandPalette.some(item => item.command === command && item.when === 'false'));
     }
     assert.equal(contributes.commands.length - menuCommands.length, 10, 'only selection history adds a public command');
-    assert.equal(contributes.menus['webview/context'].length, 4);
+    assert.equal(contributes.menus['webview/context'].length, 6);
     assert.equal(contributes.commands.find(item => item.command === 'gitpeek.refresh').icon, '$(refresh)');
     assert.ok(contributes.menus['view/title'].some(item => item.command === 'gitpeek.refresh' && item.group.startsWith('navigation')));
     for (const item of contributes.menus['webview/context']) assert.match(item.when, /webviewId == gitpeek.commitGraph && webviewSection == commit/);

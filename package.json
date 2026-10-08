@@ -25,7 +25,7 @@
     "build": "npm run compile",
     "watch": "node esbuild.js --watch",
     "check": "tsc --noEmit",
-    "test": "node --test tests/git-service.integration.cjs tests/blame.test.cjs tests/virtualEditor.test.cjs tests/fileHistory.test.mjs tests/commitGraph.integration.cjs tests/commitGraphView.test.cjs tests/checkoutCommit.integration.cjs tests/cherryPickCommit.integration.cjs tests/stashList.integration.cjs tests/stashSave.integration.cjs tests/stashApply.integration.cjs tests/stashDrop.integration.cjs tests/commit-detail.integration.cjs tests/branchCompare.integration.cjs tests/selectionOrigins.integration.cjs tests/reviewChanges.integration.cjs tests/smartCommit.test.mjs tests/contextMenus.test.cjs tests/search-regressions.test.cjs",
+    "test": "node --test tests/git-service.integration.cjs tests/blame.test.cjs tests/virtualEditor.test.cjs tests/fileHistory.test.mjs tests/commitGraph.integration.cjs tests/commitGraphView.test.cjs tests/checkoutCommit.integration.cjs tests/cherryPickCommit.integration.cjs tests/stashList.integration.cjs tests/stashSave.integration.cjs tests/stashApply.integration.cjs tests/stashDrop.integration.cjs tests/commit-detail.integration.cjs tests/branchCompare.integration.cjs tests/selectionOrigins.integration.cjs tests/reviewChanges.integration.cjs tests/smartCommit.test.mjs tests/contextMenus.test.cjs tests/search-regressions.test.cjs tests/detailsCompare.regressions.cjs",
     "package": "npm run check && npm run compile && vsce package --no-dependencies"
   },
   "devDependencies": {
@@ -152,6 +152,43 @@
         "category": "GitPeek",
         "enablement": "config.gitpeek.enabled",
         "icon": "$(pinned)"
+      },
+      {
+        "command": "gitpeek.internal.compare.selectCompare",
+        "title": "选择此提交进行比较",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled"
+      },
+      {
+        "command": "gitpeek.internal.compare.compareSelected",
+        "title": "与所选提交比较",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled"
+      },
+      {
+        "command": "gitpeek.internal.compare.clear",
+        "title": "清除比较选择",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "gitpeek.internal.compare.working",
+        "title": "与工作区文件比较",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled"
+      },
+      {
+        "command": "gitpeek.internal.graph.selectCompare",
+        "title": "选择此提交进行比较",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled"
+      },
+      {
+        "command": "gitpeek.internal.graph.compareSelected",
+        "title": "与所选提交比较",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled"
       }
     ],
     "viewsContainers": {
@@ -184,6 +221,10 @@
         {
           "id": "gitpeek.commitDetails",
           "name": "提交详情"
+        },
+        {
+          "id": "gitpeek.comparison",
+          "name": "提交比较"
         }
       ]
     },
@@ -207,6 +248,11 @@
         {
           "command": "gitpeek.internal.details.unpin",
           "when": "view == gitpeek.commitDetails && gitpeek.detailsPinned",
+          "group": "navigation@1"
+        },
+        {
+          "command": "gitpeek.internal.compare.clear",
+          "when": "view == gitpeek.comparison",
           "group": "navigation@1"
         }
       ],
@@ -287,6 +333,30 @@
         {
           "command": "gitpeek.internal.details.unpin",
           "when": "false"
+        },
+        {
+          "command": "gitpeek.internal.compare.selectCompare",
+          "when": "false"
+        },
+        {
+          "command": "gitpeek.internal.compare.compareSelected",
+          "when": "false"
+        },
+        {
+          "command": "gitpeek.internal.compare.clear",
+          "when": "false"
+        },
+        {
+          "command": "gitpeek.internal.compare.working",
+          "when": "false"
+        },
+        {
+          "command": "gitpeek.internal.graph.selectCompare",
+          "when": "false"
+        },
+        {
+          "command": "gitpeek.internal.graph.compareSelected",
+          "when": "false"
         }
       ],
       "view/item/context": [
@@ -319,6 +389,21 @@
           "command": "gitpeek.internal.file.copyRelativePath",
           "when": "(config.gitpeek.enabled && ((view == gitpeek.fileHistory && viewItem =~ /^gitpeek\\.history(Commit|File)$/) || (view == gitpeek.branchChanges && viewItem == gitpeek.branchFile) || (view == gitpeek.changes && viewItem =~ /^gitpeek\\.review\\.(staged|unstaged|untracked)$/))) || (config.gitpeek.enabled && ((view == gitpeek.commitDetails && viewItem == gitpeek.detailFile) || (view == gitpeek.comparison && viewItem == gitpeek.comparisonFile)))",
           "group": "2_copy@2"
+        },
+        {
+          "command": "gitpeek.internal.compare.selectCompare",
+          "when": "config.gitpeek.enabled && ((view == gitpeek.fileHistory && viewItem == gitpeek.historyCommit) || (view == gitpeek.branchChanges && viewItem == gitpeek.branchCommit) || (view == gitpeek.commitDetails && viewItem =~ /^gitpeek\\.detail(Commit|File)$/))",
+          "group": "3_compare@1"
+        },
+        {
+          "command": "gitpeek.internal.compare.compareSelected",
+          "when": "config.gitpeek.enabled && ((view == gitpeek.fileHistory && viewItem == gitpeek.historyCommit) || (view == gitpeek.branchChanges && viewItem == gitpeek.branchCommit) || (view == gitpeek.commitDetails && viewItem =~ /^gitpeek\\.detail(Commit|File)$/))",
+          "group": "3_compare@2"
+        },
+        {
+          "command": "gitpeek.internal.compare.working",
+          "when": "config.gitpeek.enabled && ((view == gitpeek.fileHistory && viewItem == gitpeek.historyCommit) || (view == gitpeek.commitDetails && viewItem == gitpeek.detailFile))",
+          "group": "3_compare@3"
         }
       ],
       "webview/context": [
@@ -341,6 +426,16 @@
           "command": "gitpeek.internal.graph.cherryPick",
           "when": "config.gitpeek.enabled && webviewId == gitpeek.commitGraph && webviewSection == commit",
           "group": "2_modify@4"
+        },
+        {
+          "command": "gitpeek.internal.graph.selectCompare",
+          "when": "config.gitpeek.enabled && webviewId == gitpeek.commitGraph && webviewSection == commit",
+          "group": "3_compare@1"
+        },
+        {
+          "command": "gitpeek.internal.graph.compareSelected",
+          "when": "config.gitpeek.enabled && webviewId == gitpeek.commitGraph && webviewSection == commit",
+          "group": "3_compare@2"
         }
       ],
       "explorer/context": [
