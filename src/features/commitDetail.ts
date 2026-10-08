@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { loadCommitDetail, loadCommitDiffContents, readCommitContent, type CommitContentRef } from './gitContent';
+import { loadCommitDetail, loadCommitDiffContents, readCommitContent, resolveWorkspacePaths, type CommitContentRef } from './gitContent';
 import type { GitService } from '../git/GitService';
 import type { CommitDetail, Repository } from '../git/types';
 
@@ -31,6 +31,7 @@ class GitContentProvider implements vscode.TextDocumentContentProvider {
     if (cached !== undefined) return cached;
     let ref: ContentRef;
     try { ref = JSON.parse(uri.query) as ContentRef; } catch { throw new Error('GitPeek 提交内容 URI 无效'); }
+    if (!ref || typeof ref.file !== 'string' || typeof ref.ref !== 'string' || (!ref.empty && !/^[0-9a-f]{40,64}$/i.test(ref.ref))) throw new Error('GitPeek 提交内容 URI 无效');
     const repo = this.repositories.get(`${ref.repoId}\0${ref.root}`);
     if (!repo) throw new Error('此 GitPeek 差异的仓库上下文不可用');
     return readCommitContent(this.git, repo, ref);
@@ -39,44 +40,92 @@ class GitContentProvider implements vscode.TextDocumentContentProvider {
 
 class CommitFeatures {
   private readonly content: GitContentProvider;
+  private readonly changed = new vscode.EventEmitter<void>();
+  private rows: vscode.TreeItem[] = [new vscode.TreeItem('选择一个提交以查看详情。')];
+  private current?: { repo: Repository; detail: CommitDetail };
+  private pending?: { repo: Repository; hash: string };
+  private pinned = false;
+  private generation = 0;
 
   constructor(private readonly git: GitService) { this.content = new GitContentProvider(git); }
 
   register(context: vscode.ExtensionContext): void {
-    context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider(CONTENT_SCHEME, this.content));
+    context.subscriptions.push(
+      this.changed,
+      vscode.workspace.registerTextDocumentContentProvider(CONTENT_SCHEME, this.content),
+      vscode.window.createTreeView('gitpeek.commitDetails', { treeDataProvider: {
+        onDidChangeTreeData: this.changed.event, getTreeItem: (item: vscode.TreeItem) => item,
+        getChildren: () => this.rows,
+      } }),
+      vscode.commands.registerCommand('gitpeek.internal.details.openDiff', (repo: Repository, hash: string, file: string) => this.showDiff(repo, hash, file)),
+      vscode.commands.registerCommand('gitpeek.internal.details.pin', () => {
+        if (!this.current) return;
+        this.pinned = true;
+        this.generation++;
+        void vscode.commands.executeCommand('setContext', 'gitpeek.detailsPinned', true);
+      }),
+      vscode.commands.registerCommand('gitpeek.internal.details.unpin', async () => {
+        this.pinned = false;
+        await vscode.commands.executeCommand('setContext', 'gitpeek.detailsPinned', false);
+        if (this.pending) await this.showCommit(this.pending.repo, this.pending.hash);
+      }),
+      vscode.workspace.onDidChangeConfiguration(event => {
+        if (!event.affectsConfiguration('gitpeek.enabled') || vscode.workspace.getConfiguration('gitpeek').get('enabled', true)) return;
+        this.generation++; this.current = undefined; this.pending = undefined; this.pinned = false;
+        this.rows = [new vscode.TreeItem('GitPeek 已禁用。')]; this.changed.fire();
+        void vscode.commands.executeCommand('setContext', 'gitpeek.detailsPinned', false);
+      }),
+    );
   }
 
   async showCommit(repo: Repository, hash: string): Promise<void> {
+    if (!vscode.workspace.getConfiguration('gitpeek').get('enabled', true)) return;
+    this.pending = { repo, hash };
+    if (this.pinned && this.current) {
+      await vscode.window.showInformationMessage('GitPeek：提交详情已固定，取消固定后可查看所选提交。');
+      await vscode.commands.executeCommand('gitpeek.commitDetails.focus');
+      return;
+    }
+    const request = ++this.generation;
+    this.current = undefined;
+    this.rows = [new vscode.TreeItem('正在加载提交详情…')]; this.changed.fire();
+    await vscode.commands.executeCommand('gitpeek.commitDetails.focus');
     try {
       const detail = await loadCommitDetail(this.git, repo, hash);
-      this.content.register(repo);
       const message = (await this.git.run(repo, ['show', '-s', '--format=%B', detail.hash])).replace(/\n+$/, '');
-      if (!detail.files.length) {
-        await vscode.window.showInformationMessage(`${detail.shortHash} ${detail.author} · ${formatDate(detail.date)} · 空提交\n\n${message}`);
-        return;
-      }
-      const items: Array<vscode.QuickPickItem & { file?: (typeof detail.files)[number] }> = [
-        { label: '提交信息', kind: vscode.QuickPickItemKind.Separator },
-        ...message.split(/\r?\n/).map((line) => ({ label: line || ' ', kind: vscode.QuickPickItemKind.Separator })),
-        { label: '已更改文件', kind: vscode.QuickPickItemKind.Separator },
-        ...detail.files.map((file) => ({
-          label: `${statusLabel(file.status)} ${file.path}`,
-          description: `+${file.additions ?? 0} −${file.deletions ?? 0}${file.oldPath ? ` · 来源于 ${file.oldPath}` : ''}`,
-          file,
-        })),
+      const workspacePaths = await resolveWorkspacePaths(this.git, repo, detail.hash, detail.files);
+      if (request !== this.generation) return;
+      this.current = { repo, detail };
+      this.content.register(repo);
+      const commitTarget = { repo, hash: detail.hash };
+      const heading = Object.assign(new vscode.TreeItem(detail.hash), { contextValue: 'gitpeek.detailCommit', commitTarget });
+      heading.tooltip = message;
+      this.rows = [
+        new vscode.TreeItem(repo.root), heading,
+        new vscode.TreeItem(`${detail.author} · ${formatDate(detail.date)}`),
+        ...message.split(/\r?\n/).map(line => Object.assign(new vscode.TreeItem(line || ' '), { tooltip: message })),
+        new vscode.TreeItem(`${detail.files.length} 个文件 · +${detail.additions} −${detail.deletions}`),
+        ...detail.files.map((file) => {
+          const workspacePath = workspacePaths.get(file.path);
+          return {
+            ...new vscode.TreeItem(`${statusLabel(file.status)} ${file.path}`),
+            description: `+${file.additions ?? 0} −${file.deletions ?? 0}${file.oldPath ? ` · 来源于 ${file.oldPath}` : ''}`,
+            contextValue: 'gitpeek.detailFile', fileTarget: { repo, path: workspacePath ?? file.path, workspacePathKnown: Boolean(workspacePath) },
+            commitTarget: { ...commitTarget, file: file.path, workspacePath, workspacePathKnown: Boolean(workspacePath) },
+            command: { command: 'gitpeek.internal.details.openDiff', title: '打开差异', arguments: [repo, detail.hash, file.path] },
+          };
+        }),
       ];
-      const selected = await vscode.window.showQuickPick(items, {
-        title: `${detail.shortHash} ${detail.subject}`,
-        placeHolder: `${detail.author} · ${formatDate(detail.date)} · +${detail.additions} −${detail.deletions} · 选择一个文件以打开差异`,
-        matchOnDescription: true,
-      });
-      if (selected?.file) await this.showDiffForCommit(repo, detail, selected.file.path);
+      this.changed.fire();
     } catch (error) {
+      if (request !== this.generation) return;
+      this.rows = [new vscode.TreeItem(`无法加载提交：${errorMessage(error)}`)]; this.changed.fire();
       await vscode.window.showErrorMessage(`GitPeek：无法显示提交：${errorMessage(error)}`);
     }
   }
 
   async showDiff(repo: Repository, hash: string, filePath?: string): Promise<void> {
+    if (!vscode.workspace.getConfiguration('gitpeek').get('enabled', true)) return;
     try {
       const detail = await loadCommitDetail(this.git, repo, hash);
       this.content.register(repo);
@@ -92,12 +141,13 @@ class CommitFeatures {
       }
       await this.showDiffForCommit(repo, detail, filePath);
     } catch (error) {
-      await vscode.window.showErrorMessage(`GitPeek：无法打开差异：${errorMessage(error)}`);
+      if (vscode.workspace.getConfiguration('gitpeek').get('enabled', true)) await vscode.window.showErrorMessage(`GitPeek：无法打开差异：${errorMessage(error)}`);
     }
   }
 
   private async showDiffForCommit(repo: Repository, detail: CommitDetail, filePath: string): Promise<void> {
     const loaded = await loadCommitDiffContents(this.git, repo, detail, filePath);
+    if (!vscode.workspace.getConfiguration('gitpeek').get('enabled', true)) return;
     const oldPath = loaded.file.status === 'R' ? loaded.file.oldPath! : loaded.file.path;
     const oldUri = this.content.uri(repo, loaded.parent ?? '', oldPath, 'before', loaded.file.status === 'A' || !loaded.parent, loaded.binary);
     const newUri = this.content.uri(repo, detail.hash, loaded.file.path, 'after', loaded.file.status === 'D', loaded.binary);

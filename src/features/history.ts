@@ -143,7 +143,9 @@ export async function registerHistory(
         const rows: HistoryItem[] = [Object.assign(message(vscode, vscode.workspace.asRelativePath(uri, false)), {
           contextValue: 'gitpeek.historyFile', fileTarget,
         })];
-        rows.push(...page.commits.map((commit) => Object.assign(commitItem(vscode, repo, commit, !!showDiff), { fileTarget })));
+        rows.push(...page.commits.map((commit) => Object.assign(commitItem(vscode, repo, commit, !!showDiff), {
+          fileTarget, commitTarget: { repo, hash: commit.hash, file: commit.filePath, workspacePath: file },
+        })));
         if (!page.commits.length) rows.push(message(vscode, '此文件没有提交记录。'));
         else if (page.hasMore) rows.push(moreItem(vscode));
         return rows;

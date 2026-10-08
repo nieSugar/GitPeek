@@ -138,6 +138,20 @@
         "title": "复制相对路径",
         "category": "GitPeek",
         "enablement": "config.gitpeek.enabled"
+      },
+      {
+        "command": "gitpeek.internal.details.pin",
+        "title": "固定提交详情",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled",
+        "icon": "$(pin)"
+      },
+      {
+        "command": "gitpeek.internal.details.unpin",
+        "title": "取消固定",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled",
+        "icon": "$(pinned)"
       }
     ],
     "viewsContainers": {
@@ -166,6 +180,10 @@
         {
           "id": "gitpeek.fileHistory",
           "name": "文件历史"
+        },
+        {
+          "id": "gitpeek.commitDetails",
+          "name": "提交详情"
         }
       ]
     },
@@ -180,6 +198,16 @@
           "command": "gitpeek.refresh",
           "when": "config.gitpeek.enabled && view =~ /^gitpeek\\.(repository|changes|branchChanges|fileHistory)$/",
           "group": "navigation@9"
+        },
+        {
+          "command": "gitpeek.internal.details.pin",
+          "when": "view == gitpeek.commitDetails && !gitpeek.detailsPinned",
+          "group": "navigation@1"
+        },
+        {
+          "command": "gitpeek.internal.details.unpin",
+          "when": "view == gitpeek.commitDetails && gitpeek.detailsPinned",
+          "group": "navigation@1"
         }
       ],
       "editor/title": [
@@ -251,12 +279,20 @@
         {
           "command": "gitpeek.internal.file.copyRelativePath",
           "when": "false"
+        },
+        {
+          "command": "gitpeek.internal.details.pin",
+          "when": "false"
+        },
+        {
+          "command": "gitpeek.internal.details.unpin",
+          "when": "false"
         }
       ],
       "view/item/context": [
         {
           "command": "gitpeek.internal.tree.openDiff",
-          "when": "config.gitpeek.enabled && ((view == gitpeek.fileHistory && viewItem == gitpeek.historyCommit) || (view == gitpeek.branchChanges && viewItem == gitpeek.branchFile))",
+          "when": "(config.gitpeek.enabled && ((view == gitpeek.fileHistory && viewItem == gitpeek.historyCommit) || (view == gitpeek.branchChanges && viewItem == gitpeek.branchFile))) || (config.gitpeek.enabled && ((view == gitpeek.commitDetails && viewItem == gitpeek.detailFile) || (view == gitpeek.comparison && viewItem == gitpeek.comparisonFile)))",
           "group": "navigation@1"
         },
         {
@@ -266,7 +302,7 @@
         },
         {
           "command": "gitpeek.internal.tree.copyHash",
-          "when": "config.gitpeek.enabled && ((view == gitpeek.fileHistory && viewItem == gitpeek.historyCommit) || (view == gitpeek.branchChanges && viewItem == gitpeek.branchCommit))",
+          "when": "(config.gitpeek.enabled && ((view == gitpeek.fileHistory && viewItem == gitpeek.historyCommit) || (view == gitpeek.branchChanges && viewItem == gitpeek.branchCommit))) || (config.gitpeek.enabled && view == gitpeek.commitDetails && viewItem =~ /^gitpeek\\.detail(Commit|File)$/)",
           "group": "2_copy@1"
         },
         {
@@ -276,12 +312,12 @@
         },
         {
           "command": "gitpeek.internal.file.open",
-          "when": "config.gitpeek.enabled && ((view == gitpeek.fileHistory && viewItem =~ /^gitpeek\\.history(Commit|File)$/) || (view == gitpeek.branchChanges && viewItem == gitpeek.branchFile) || (view == gitpeek.changes && viewItem =~ /^gitpeek\\.review\\.(staged|unstaged|untracked)$/))",
+          "when": "(config.gitpeek.enabled && ((view == gitpeek.fileHistory && viewItem =~ /^gitpeek\\.history(Commit|File)$/) || (view == gitpeek.branchChanges && viewItem == gitpeek.branchFile) || (view == gitpeek.changes && viewItem =~ /^gitpeek\\.review\\.(staged|unstaged|untracked)$/))) || (config.gitpeek.enabled && ((view == gitpeek.commitDetails && viewItem == gitpeek.detailFile) || (view == gitpeek.comparison && viewItem == gitpeek.comparisonFile)))",
           "group": "navigation@3"
         },
         {
           "command": "gitpeek.internal.file.copyRelativePath",
-          "when": "config.gitpeek.enabled && ((view == gitpeek.fileHistory && viewItem =~ /^gitpeek\\.history(Commit|File)$/) || (view == gitpeek.branchChanges && viewItem == gitpeek.branchFile) || (view == gitpeek.changes && viewItem =~ /^gitpeek\\.review\\.(staged|unstaged|untracked)$/))",
+          "when": "(config.gitpeek.enabled && ((view == gitpeek.fileHistory && viewItem =~ /^gitpeek\\.history(Commit|File)$/) || (view == gitpeek.branchChanges && viewItem == gitpeek.branchFile) || (view == gitpeek.changes && viewItem =~ /^gitpeek\\.review\\.(staged|unstaged|untracked)$/))) || (config.gitpeek.enabled && ((view == gitpeek.commitDetails && viewItem == gitpeek.detailFile) || (view == gitpeek.comparison && viewItem == gitpeek.comparisonFile)))",
           "group": "2_copy@2"
         }
       ],

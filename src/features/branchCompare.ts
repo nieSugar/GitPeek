@@ -372,7 +372,7 @@ export function registerBranchCompare(
         const item = treeItem(`${commit.shortHash} ${commit.subject}`, `${commit.author} · ${new Date(commit.date).toLocaleDateString('zh-CN')}`)
         item.command = { command: 'gitpeek.internal.branch.showCommit', title: '查看提交', arguments: [summary.repo, commit.hash] }
         item.contextValue = 'gitpeek.branchCommit'
-        return item
+        return Object.assign(item, { commitTarget: { repo: summary.repo, hash: commit.hash } })
       }),
       treeItem(`文件 (${summary.files.length}) · +${summary.additions} −${summary.deletions}`),
       ...summary.files.map((file) => {

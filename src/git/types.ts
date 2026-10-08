@@ -3,6 +3,14 @@ export interface Repository {
   id: string
 }
 
+export interface CommitTarget {
+  repo: Repository
+  hash: string
+  file?: string
+  workspacePath?: string
+  workspacePathKnown?: boolean
+}
+
 export interface CommitInfo {
   hash: string
   shortHash: string

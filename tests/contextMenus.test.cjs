@@ -59,6 +59,7 @@ async function main() {
         showErrorMessage: async message => errors.push(message),
       },
       workspace: {
+        textDocuments: [],
         fs: { stat: async uri => {
           try { return { type: statSync(uri.fsPath).isDirectory() ? 2 : 1 }; }
           catch (error) { throw Object.assign(new vscode.FileSystemError(error.message), { code: error.code === 'ENOENT' ? 'FileNotFound' : error.code }); }
@@ -74,7 +75,7 @@ async function main() {
         executeCommand: async (name, ...args) => commands.has(name) ? commands.get(name)(...args) : opened.push([name, ...args]),
       },
     };
-    const names = ['commitGraph', 'history', 'sidebar', 'branchCompare', 'reviewChanges'];
+    const names = ['commitGraph', 'history', 'sidebar', 'branchCompare', 'reviewChanges', 'commitDetail'];
     await esbuild.build({ entryPoints: [...names.map(name => path.join(__dirname, '..', 'src', 'features', `${name}.ts`)), path.join(__dirname, '..', 'src', 'git', 'GitService.ts')], bundle: true, platform: 'node', format: 'cjs', supported: { 'dynamic-import': false }, external: ['vscode'], outdir: temp, outExtension: { '.js': '.cjs' } });
     Module._load = function (request, parent, isMain) { return request === 'vscode' ? vscode : originalLoad.call(this, request, parent, isMain); };
     const { GitService } = require(path.join(temp, 'git', 'GitService.cjs'));
@@ -85,6 +86,7 @@ async function main() {
       pickRepository: async () => selectedRepo,
     };
     const context = { subscriptions };
+    feature('commitDetail').registerCommitFeatures(context, service);
     const showCommit = async (...args) => shown.push(args);
     const graph = feature('commitGraph').registerCommitGraph(context, service, repositories, showCommit);
     const history = await feature('history').registerHistory(context, service, repositories, async (...args) => opened.push(['historyDiff', ...args]));
@@ -230,7 +232,7 @@ async function main() {
       assert.ok(commands.has(command), `menu command is registered: ${command}`);
       assert.ok(contributes.menus.commandPalette.some(item => item.command === command && item.when === 'false'));
     }
-    assert.equal(contributes.commands.length - menuCommands.length, 10, 'context menus do not add palette clutter');
+    assert.equal(contributes.commands.length - menuCommands.length, 10, 'only selection history adds a public command');
     assert.equal(contributes.menus['webview/context'].length, 4);
     assert.equal(contributes.commands.find(item => item.command === 'gitpeek.refresh').icon, '$(refresh)');
     assert.ok(contributes.menus['view/title'].some(item => item.command === 'gitpeek.refresh' && item.group.startsWith('navigation')));

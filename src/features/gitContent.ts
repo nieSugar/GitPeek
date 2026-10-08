@@ -21,7 +21,7 @@ export interface CommitContentRef {
 
 export async function readCommitContent(git: GitService, repo: Repository, ref: CommitContentRef): Promise<string> {
   if (ref.empty) return '';
-  if (ref.binary) return binaryLabel(ref.file, ref.side ?? 'requested');
+  if (ref.binary) return binaryLabel(ref.file, ref.side ?? 'requested', ref.ref);
   return git.run(repo, ['show', `${ref.ref}:${ref.file}`]);
 }
 
@@ -48,6 +48,32 @@ export async function loadCommitDetail(git: GitService, repo: Repository, ref: s
   };
 }
 
+export async function resolveWorkspacePaths(git: GitService, repo: Repository, hash: string, files: readonly FileChange[]): Promise<Map<string, string>> {
+  const paths = new Map<string, string>();
+  try {
+    const head = (await git.run(repo, ['rev-parse', '--verify', 'HEAD'])).trim();
+    const chain = (await git.run(repo, ['rev-list', '--first-parent', head])).trim().split('\n');
+    if (!chain.includes(hash)) return paths;
+    const initial = new Set((await git.run(repo, ['ls-tree', '-r', '--name-only', '-z', hash])).split('\0'));
+    for (const file of files) if (initial.has(file.path)) paths.set(file.path, file.path);
+    if (head !== hash) {
+      const changes = await git.run(repo, ['log', '--first-parent', '--reverse', '--diff-merges=first-parent', '--format=%x00%x00', '--name-status', '-z', '-M', `${hash}..${head}`, '--']);
+      // NUL-delimited commit boundaries keep simultaneous renames from being followed twice.
+      for (const record of changes.split('\0\0\0')) {
+        const changesInCommit = parseNameStatus(record.replace(/^[\0\n]+/, ''));
+        for (const [original, current] of paths) {
+          const change = changesInCommit.find(file => (file.status === 'R' ? file.oldPath : file.path) === current);
+          if (change?.status === 'R') paths.set(original, change.path);
+          else if (change?.status === 'D') paths.delete(original);
+        }
+      }
+    }
+    const current = new Set((await git.run(repo, ['ls-tree', '-r', '--name-only', '-z', head])).split('\0'));
+    for (const [original, path] of paths) if (!current.has(path)) paths.delete(original);
+    return paths;
+  } catch { return new Map(); } // A mapping that cannot be verified must not open a reused historical name.
+}
+
 export async function loadCommitDiffContents(
   git: GitService,
   repo: Repository,
@@ -65,8 +91,8 @@ export async function loadCommitDiffContents(
   const beforePath = file.status === 'R' ? file.oldPath : file.path;
   const isAdded = file.status === 'A';
   const isDeleted = file.status === 'D';
-  const oldContent = isAdded ? '' : binary ? binaryLabel(file.oldPath ?? file.path, 'before') : await git.run(repo, ['show', `${parent}:${beforePath}`]);
-  const newContent = isDeleted ? '' : binary ? binaryLabel(file.path, 'after') : await git.run(repo, ['show', `${commit.hash}:${file.path}`]);
+  const oldContent = isAdded ? '' : binary ? binaryLabel(file.oldPath ?? file.path, 'before', parent) : await git.run(repo, ['show', `${parent}:${beforePath}`]);
+  const newContent = isDeleted ? '' : binary ? binaryLabel(file.path, 'after', commit.hash) : await git.run(repo, ['show', `${commit.hash}:${file.path}`]);
   return { commit, file, parent, oldContent, newContent, binary };
 }
 
@@ -74,7 +100,7 @@ function literalPaths(file: FileChange): string[] {
   return (file.oldPath ? [file.oldPath, file.path] : [file.path]).map((path) => `:(literal)${path}`);
 }
 
-function isBinaryNumstat(output: string, filePath: string): boolean {
+export function isBinaryNumstat(output: string, filePath: string): boolean {
   const fields = output.split('\0');
   for (let i = 0; i < fields.length;) {
     const record = fields[i++];
@@ -93,6 +119,6 @@ function isBinaryNumstat(output: string, filePath: string): boolean {
   return false;
 }
 
-function binaryLabel(path: string, side: string): string {
-  return `[二进制文件（${side === 'before' ? '提交前' : side === 'after' ? '提交后' : '请求内容'}）：${path}；GitPeek 以元数据形式显示更改。]\n`;
+function binaryLabel(path: string, side: string, ref?: string): string {
+  return `[二进制文件（${side === 'before' ? '提交前' : side === 'after' ? '提交后' : '请求内容'}）：${path}${ref ? `；提交 ${ref.slice(0, 7)}` : ''}；GitPeek 以元数据形式显示更改。]\n`;
 }

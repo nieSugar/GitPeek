@@ -107,6 +107,7 @@ async function checkHistoryClicks(temp, gitService, repo) {
     ThemeIcon: class {}, RelativePattern: class {}, TreeItemCollapsibleState: { None: 0 },
     Uri: { file: (fsPath) => uri({ scheme: 'file', fsPath }), from: uri },
     window: {
+      createTreeView: () => disposable,
       activeTextEditor: { document: { uri: uri({ scheme: 'file', fsPath: join(repo.root, currentFile) }) } },
       onDidChangeActiveTextEditor: (handler) => (changeEditor = handler, disposable),
       onDidChangeWindowState: () => disposable,

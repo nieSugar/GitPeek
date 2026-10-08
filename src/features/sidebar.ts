@@ -2,10 +2,10 @@ import * as vscode from 'vscode';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import type { HistoryFeature } from './history';
 import type { ReviewNode } from './reviewChanges';
-import type { Repository } from '../git/types';
+import type { CommitTarget, Repository } from '../git/types';
 
 type Section = 'repository' | 'branchChanges';
-type FileItem = vscode.TreeItem & { fileTarget?: { repo: Repository; path: string } };
+type FileItem = vscode.TreeItem & { fileTarget?: { repo: Repository; path: string; workspacePathKnown?: boolean }; commitTarget?: CommitTarget };
 
 export interface SidebarFeature {
   refresh(): void;
@@ -32,7 +32,7 @@ export function registerSidebar<T>(
   context.subscriptions.push(...views, ...Object.values(sections));
   context.subscriptions.push(
     vscode.commands.registerCommand('gitpeek.internal.tree.openDiff', (item?: vscode.TreeItem) => {
-      if (!['gitpeek.historyCommit', 'gitpeek.branchFile'].includes(item?.contextValue ?? '')) return;
+      if (!['gitpeek.historyCommit', 'gitpeek.branchFile', 'gitpeek.detailFile', 'gitpeek.comparisonFile'].includes(item?.contextValue ?? '')) return;
       const command = item?.command;
       if (command) return vscode.commands.executeCommand(command.command, ...(command.arguments ?? []));
     }),
@@ -41,12 +41,16 @@ export function registerSidebar<T>(
       const [repo, hash] = item?.command?.arguments ?? [];
       if (repo && typeof hash === 'string') return showCommit(repo, hash);
     }),
-    vscode.commands.registerCommand('gitpeek.internal.tree.copyHash', (item?: vscode.TreeItem) => {
-      if (!['gitpeek.historyCommit', 'gitpeek.branchCommit'].includes(item?.contextValue ?? '')) return;
-      const hash = item?.command?.arguments?.[1];
+    vscode.commands.registerCommand('gitpeek.internal.tree.copyHash', (item?: FileItem) => {
+      if (!['gitpeek.historyCommit', 'gitpeek.branchCommit', 'gitpeek.detailCommit', 'gitpeek.detailFile'].includes(item?.contextValue ?? '')) return;
+      const hash = item?.commitTarget?.hash ?? item?.command?.arguments?.[1];
       if (typeof hash === 'string') return vscode.env.clipboard.writeText(hash);
     }),
     vscode.commands.registerCommand('gitpeek.internal.file.open', async (item?: FileItem | ReviewNode) => {
+      if (item && (('commitTarget' in item && item.commitTarget?.workspacePathKnown === false) || ('fileTarget' in item && item.fileTarget?.workspacePathKnown === false))) {
+        await vscode.window.showInformationMessage('GitPeek：无法确认该历史文件的当前工作区路径，请通过“打开差异”查看历史内容。');
+        return;
+      }
       const target = fileTarget(item);
       if (!target) return;
       try {
