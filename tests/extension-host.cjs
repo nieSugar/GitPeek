@@ -7,6 +7,7 @@ const PUBLIC_COMMANDS = [
   'gitpeek.stash',
   'gitpeek.blameCurrentLine',
   'gitpeek.selectionOrigins',
+  'gitpeek.selectionHistory',
   'gitpeek.compareWithBase',
   'gitpeek.showBranchChanges',
   'gitpeek.reviewChanges',

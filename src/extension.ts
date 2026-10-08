@@ -13,6 +13,7 @@ import { registerReviewChanges } from './features/reviewChanges';
 import { generateCommitMessage } from './features/smartCommit';
 import { registerStashFeatures } from './features/stashFeature';
 import { registerRevisionCompare } from './features/revisionCompare';
+import { registerSelectionHistory } from './features/selectionHistory';
 
 const output = vscode.window.createOutputChannel('GitPeek');
 
@@ -23,6 +24,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   registerStashFeatures(context, git, repositories);
   const commits = registerCommitFeatures(context, git);
   registerRevisionCompare(context, git);
+  registerSelectionHistory(context, git, repositories, commits.showCommit);
   const graph = registerCommitGraph(context, git, repositories, commits.showCommit);
   const blame = new BlameController(git, repositories, commits);
   context.subscriptions.push(blame);

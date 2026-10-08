@@ -56,10 +56,10 @@ const hostVscode = {
 };
 const PUBLIC_COMMANDS = [
   'gitpeek.fileHistory', 'gitpeek.showCommitGraph', 'gitpeek.stash', 'gitpeek.blameCurrentLine', 'gitpeek.selectionOrigins', 'gitpeek.compareWithBase',
-  'gitpeek.showBranchChanges', 'gitpeek.reviewChanges', 'gitpeek.generateCommitMessage', 'gitpeek.refresh',
+  'gitpeek.showBranchChanges', 'gitpeek.reviewChanges', 'gitpeek.generateCommitMessage', 'gitpeek.refresh', 'gitpeek.selectionHistory',
 ];
 const hostResult = await runHostProbe({ vscode: hostVscode });
-assert.equal(hostResult.publicCommands, 10);
+assert.equal(hostResult.publicCommands, 11);
 assert.equal(hostResult.repositories[0].root, repository.rootUri.fsPath);
 assert.equal(scmInput.value, 'keep this draft', 'the host probe must not change the SCM draft');
 await assert.rejects(runHostProbe({

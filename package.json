@@ -140,6 +140,12 @@
         "enablement": "config.gitpeek.enabled"
       },
       {
+        "command": "gitpeek.selectionHistory",
+        "title": "选区演进历史",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled"
+      },
+      {
         "command": "gitpeek.internal.details.pin",
         "title": "固定提交详情",
         "category": "GitPeek",
@@ -283,6 +289,11 @@
           "command": "gitpeek.selectionOrigins",
           "when": "config.gitpeek.enabled && editorHasSelection && resourceScheme == file",
           "group": "gitpeek@3"
+        },
+        {
+          "command": "gitpeek.selectionHistory",
+          "when": "config.gitpeek.enabled && editorHasSelection && resourceScheme == file",
+          "group": "gitpeek@4"
         }
       ],
       "commandPalette": [
