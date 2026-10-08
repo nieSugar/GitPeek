@@ -66,7 +66,7 @@ module.exports.run = async function run(options = {}) {
   if (workspaceRoots.length === 1 && vscode.TabInputWebview) {
     await vscode.commands.executeCommand('gitpeek.showCommitGraph');
     const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
-    if (!(input instanceof vscode.TabInputWebview) || input.viewType !== 'gitpeek.commitGraph') {
+    if (!(input instanceof vscode.TabInputWebview) || !['gitpeek.commitGraph', 'mainThreadWebview-gitpeek.commitGraph'].includes(input.viewType)) {
       throw new Error('GitPeek Commit Graph did not open in an editor tab.');
     }
   }

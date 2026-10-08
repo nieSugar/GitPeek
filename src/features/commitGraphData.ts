@@ -19,6 +19,12 @@ export interface GraphSnapshot {
   hasMore: boolean;
 }
 
+export interface GraphQuery {
+  kind: 'message' | 'author' | 'hash';
+  text: string;
+  scope: 'all' | 'current';
+}
+
 export function parseGraph(output: string, limit: number): Pick<GraphSnapshot, 'rows' | 'hasMore'> {
   const rows: GraphRow[] = [];
   let commits = 0;
@@ -41,16 +47,35 @@ export function parseGraph(output: string, limit: number): Pick<GraphSnapshot, '
   return { rows, hasMore: false };
 }
 
-export async function loadGraph(git: GitService, repo: Repository, limit = 100): Promise<GraphSnapshot> {
-  const count = Math.min(500, Math.max(1, Math.floor(limit)));
+export async function loadGraph(git: GitService, repo: Repository, limit = 100, query?: GraphQuery): Promise<GraphSnapshot> {
+  const count = Math.max(1, Math.floor(limit));
   const [branch, branches, head] = await Promise.all([
     git.run(repo, ['branch', '--show-current']),
     git.run(repo, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']),
     git.run(repo, ['rev-parse', '--verify', 'HEAD']).catch(() => ''),
   ]);
+  const refs = query?.scope === 'current' ? ['HEAD'] : ['--all', 'HEAD'];
+  const filters: string[] = [];
+  if (query?.text) {
+    if (query.kind === 'hash') {
+      if (!/^[0-9a-f]{4,64}$/i.test(query.text)) throw new Error('Hash 至少需要 4 位十六进制字符。');
+      const hash = (await git.run(repo, ['rev-parse', '--verify', '--end-of-options', `${query.text}^{commit}`])).trim();
+      if (query.scope === 'current') {
+        try { await git.run(repo, ['merge-base', '--is-ancestor', hash, 'HEAD']); }
+        catch (error) {
+          if ((error as Error & { cause?: { code?: number } }).cause?.code !== 1) throw error;
+          return { branch: branch.trim(), branches: branches.trim().split(/\r?\n/).filter(Boolean), rows: [], hasMore: false };
+        }
+      }
+      refs.splice(0, refs.length, hash);
+    } else filters.push('--fixed-strings', '--regexp-ignore-case', `${query.kind === 'author' ? '--author' : '--grep'}=${query.text}`);
+  }
+  const hashSearch = Boolean(query?.text && query.kind === 'hash');
+  // --max-count enables traversal; exact Hash queries must put --no-walk after it.
   const result = head ? parseGraph(await git.run(repo, [
-    'log', '--graph', '--all', 'HEAD', '--date-order', `--max-count=${count + 1}`,
+    'log', ...(hashSearch ? [] : ['--graph']), ...filters, ...refs, '--date-order', `--max-count=${count + 1}`, ...(hashSearch ? ['--no-walk'] : []),
     '--pretty=format:%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%s%x1f%D%x1e',
+    '--',
   ], { timeoutMs: 10_000 }), count) : { rows: [], hasMore: false };
   return { branch: branch.trim(), branches: branches.trim().split(/\r?\n/).filter(Boolean), ...result };
 }

@@ -34,6 +34,13 @@ async function main() {
     assert.equal(isGitPeekEditor(undefined), true);
     tab(new vscode.TabInputWebview('gitpeek.commitGraph'));
     assert.equal(isGitPeekEditor(undefined), true, 'graph tab preserves repository context');
+    tab(new vscode.TabInputWebview('mainThreadWebview-gitpeek.commitGraph'));
+    assert.equal(isGitPeekEditor(undefined), true, 'native VS Code webview prefix preserves repository context');
+    assert.equal(isGitPeekEditor({ document: { uri: uri('file') } }), false, 'a real file still takes precedence over the graph tab');
+    for (const unrelated of ['mainThreadWebview-unrelated.view', 'other-gitpeek.commitGraph', 'mainThreadWebview-gitpeek.commitGraph.extra']) {
+      tab(new vscode.TabInputWebview(unrelated));
+      assert.equal(isGitPeekEditor(undefined), false, 'unrelated webview IDs do not retain GitPeek context');
+    }
     tab(new vscode.TabInputWebview('unrelated.view'));
     assert.equal(isGitPeekEditor(undefined), false);
     vscode.window.tabGroups.activeTabGroup.activeTab = undefined;

@@ -8,7 +8,7 @@ import { checkoutCommit } from './checkoutCommit';
 import { abortCherryPick, cherryPickCommit, cherryPickInProgress, continueCherryPick } from './cherryPickCommit';
 import {
   avatarByEmail, createAndSwitchBranch, loadGraph, mergeLocalBranch, parseGitHubRemote,
-  switchLocalBranch, type GraphSnapshot,
+  switchLocalBranch, type GraphSnapshot, type GraphQuery,
 } from './commitGraphData';
 
 export function registerCommitGraph(
@@ -23,6 +23,7 @@ export function registerCommitGraph(
   let ready = false;
   let limit = 100;
   let generation = 0;
+  let query: GraphQuery = { kind: 'message', text: '', scope: 'all' };
   const avatarCache = new Map<string, { expires: number; avatars: Record<string, string> }>();
 
   const refresh = async (): Promise<void> => {
@@ -32,10 +33,10 @@ export function registerCommitGraph(
     snapshot = undefined;
     void panel.webview.postMessage({ type: 'loading' });
     try {
-      const [data, cherryInProgress] = await Promise.all([loadGraph(git, target, limit), cherryPickInProgress(git, target)]);
+      const [data, cherryInProgress] = await Promise.all([loadGraph(git, target, limit, query), cherryPickInProgress(git, target)]);
       if (current !== generation || !panel || repo?.id !== target.id) return;
       snapshot = data;
-      void panel.webview.postMessage({ type: 'render', data, limit, cherryInProgress, repoId: target.id, generation: current });
+      void panel.webview.postMessage({ type: 'render', data, query, limit, cherryInProgress, repoId: target.id, generation: current });
       void loadAvatars(target, data.branch).then(avatars => {
         if (current === generation && panel && repo?.id === target.id) {
           void panel.webview.postMessage({ type: 'avatars', avatars });
@@ -58,7 +59,7 @@ export function registerCommitGraph(
       await vscode.window.showInformationMessage('GitPeek：请打开 Git 仓库中的文件，或选择一个仓库。');
       return;
     }
-    if (repo?.id !== selected.id) snapshot = undefined;
+    if (repo?.id !== selected.id) { snapshot = undefined; limit = 100; query = { kind: 'message', text: '', scope: 'all' }; }
     repo = selected;
     if (panel) {
       panel.title = `GitPeek 提交图 · ${basename(selected.root)}`;
@@ -80,11 +81,20 @@ export function registerCommitGraph(
     const action = (message as { type?: unknown }).type;
     if (action === 'ready') { ready = true; await refresh(); return; }
     if (action === 'refresh') { await refresh(); return; }
-    if (action === 'loadMore') { limit = Math.min(500, limit + 100); await refresh(); return; }
+    if (action === 'loadMore') { limit += 100; await refresh(); return; }
     if (!vscode.workspace.getConfiguration('gitpeek').get<boolean>('enabled', true)) return;
+    if (action === 'search') {
+      const value = message as { kind?: unknown; text?: unknown; scope?: unknown };
+      if (!['message', 'author', 'hash'].includes(String(value.kind)) || !['all', 'current'].includes(String(value.scope)) || typeof value.text !== 'string' || value.text.length > 500) return;
+      query = { kind: value.kind as GraphQuery['kind'], text: value.text.trim(), scope: value.scope as GraphQuery['scope'] };
+      limit = 100; await refresh(); return;
+    }
     if (action === 'commit') {
       const hash = (message as { hash?: unknown }).hash;
-      if (typeof hash === 'string' && snapshot?.rows.some(row => row.hash === hash)) await showCommit(repo, hash);
+      if (typeof hash === 'string' && snapshot?.rows.some(row => row.hash === hash)) {
+        void panel.webview.postMessage({ type: 'select', hash, repoId: repo.id, generation });
+        await showCommit(repo, hash);
+      }
       return;
     }
     if (action === 'actions') {
@@ -221,11 +231,15 @@ export function registerCommitGraph(
   };
 
   context.subscriptions.push(vscode.commands.registerCommand('gitpeek.showCommitGraph', show));
-  for (const action of ['commit', 'copy', 'checkout', 'cherryPick']) {
+  for (const action of ['commit', 'copy', 'checkout', 'cherryPick', 'selectCompare', 'compareSelected']) {
     context.subscriptions.push(vscode.commands.registerCommand(`gitpeek.internal.graph.${action}`, (value: unknown) => {
       if (!value || typeof value !== 'object') return;
       const target = value as Record<string, unknown>;
       if (target.gitpeekGraphRepoId !== repo?.id || target.gitpeekGraphGeneration !== generation) return;
+      if (action === 'selectCompare' || action === 'compareSelected') {
+        if (!repo || typeof target.gitpeekCommitHash !== 'string' || !snapshot?.rows.some(row => row.hash === target.gitpeekCommitHash)) return;
+        return vscode.commands.executeCommand(`gitpeek.internal.compare.${action}`, { commitTarget: { repo, hash: target.gitpeekCommitHash } });
+      }
       return handleMessage({ type: action === 'commit' ? 'commit' : 'actions', hash: target.gitpeekCommitHash }, action);
     }));
   }
@@ -249,6 +263,7 @@ header{flex:none;padding:18px 24px 12px;border-bottom:1px solid var(--vscode-pan
 .branch-button svg{flex:none}.branch-button:hover,.actions button:hover,.row-action:hover{background:var(--vscode-toolbar-hoverBackground)}#branch{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .actions{gap:4px;flex-wrap:wrap}.actions button{padding:5px 9px;border:1px solid transparent;border-radius:4px;background:transparent}.actions .refresh{display:flex;align-items:center;gap:6px}.actions .cherry{background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground)}
 .summary{justify-content:space-between;margin-top:12px;font-size:12px;color:var(--vscode-descriptionForeground)}.hint{white-space:nowrap}
+.search{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}.search input,.search select,.search button{font:inherit;padding:5px;color:var(--vscode-input-foreground);background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,var(--vscode-panel-border))}.search input{flex:1;min-width:120px}.row.selected{outline:1px solid var(--vscode-focusBorder);outline-offset:-1px}
 .history{--graph-width:56px;--author-width:148px;--date-width:100px;--hash-width:76px;flex:1;min-height:0;overflow:auto;padding:0 12px}
 .columns,.commit{display:grid;grid-template-columns:var(--graph-width) minmax(180px,1fr) var(--author-width) var(--date-width) var(--hash-width);align-items:center;column-gap:12px}
 .columns{position:sticky;top:0;z-index:1;min-width:660px;padding:12px 44px 10px 12px;background:var(--vscode-editor-background);border-bottom:1px solid var(--vscode-panel-border);font-size:11px;color:var(--vscode-descriptionForeground)}
@@ -265,11 +280,15 @@ header{flex:none;padding:18px 24px 12px;border-bottom:1px solid var(--vscode-pan
 </style></head><body>
 <header><div class="toolbar"><div class="context"><h1>提交图</h1><button class="branch-button" data-action="switch" title="切换本地分支" aria-label="切换分支"><svg width="14" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="4" cy="3" r="2"/><circle cx="12" cy="4" r="2"/><circle cx="4" cy="13" r="2"/><path d="M4 5v6m8-5c0 4-8 1-8 5"/></svg><span id="branch">读取分支…</span></button></div>
 <div class="actions"><button data-action="create">＋ 新建分支</button><button data-action="merge">合并分支</button><button class="cherry" data-action="cherryContinue" hidden>继续 Cherry-pick</button><button class="cherry" data-action="cherryAbort" hidden>中止 Cherry-pick</button><button class="refresh" data-action="refresh"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M13 6a5 5 0 1 0 0 5M13 2v4H9"/></svg>刷新</button></div></div>
+<form id="search" class="search"><select id="searchKind" aria-label="搜索类型"><option value="message">提交消息</option><option value="author">作者</option><option value="hash">Hash</option></select><input id="searchText" maxlength="500" aria-label="搜索完整 Git 历史" placeholder="搜索完整 Git 历史"><select id="searchScope" aria-label="分支范围"><option value="all">全部分支</option><option value="current">当前分支</option></select><button type="submit">搜索</button><button type="button" data-action="clearSearch">清除</button></form>
 <div class="summary"><span id="status" role="status" aria-live="polite">正在加载…</span><span class="hint">点击提交查看详情 · 右键打开提交操作</span></div></header>
 <main class="history" aria-label="提交历史"><div class="columns" aria-hidden="true"><span>提交线</span><span>提交信息</span><span>作者</span><span>日期</span><span>Commit</span></div><div id="rows"></div><button id="more" data-action="loadMore" hidden>加载更多提交</button></main>
 <script nonce="${nonce}">
 const vscode=acquireVsCodeApi(), rows=document.getElementById('rows'), status=document.getElementById('status'), more=document.getElementById('more');
-const colors=['blue','orange','green','purple','red','yellow'].map(name=>'var(--vscode-charts-'+name+', var(--vscode-textLink-foreground))');let data,avatars={},repoId,generation;
+const colors=['blue','orange','green','purple','red','yellow'].map(name=>'var(--vscode-charts-'+name+', var(--vscode-textLink-foreground))');let data,avatars={},repoId,generation,query,selectedHash;
+const searchForm=document.getElementById('search'),searchKind=document.getElementById('searchKind'),searchText=document.getElementById('searchText'),searchScope=document.getElementById('searchScope');let searchDirty=false;
+for(const event of ['input','change'])searchForm.addEventListener(event,()=>{searchDirty=true});
+searchForm.addEventListener('submit',event=>{event.preventDefault();searchDirty=false;vscode.postMessage({type:'search',kind:searchKind.value,text:searchText.value,scope:searchScope.value})});
 function svgElement(name,attributes){const element=document.createElementNS('http://www.w3.org/2000/svg',name);for(const [key,value] of Object.entries(attributes))element.setAttribute(key,String(value));return element}
 function graphCells(commits){
   const cells=[];let lanes=[],nextColor=0,maxLanes=1;
@@ -299,10 +318,12 @@ function label(className,text){const element=document.createElement('span');elem
 function draw(){
   rows.replaceChildren();if(!data)return;
   const branch=document.getElementById('branch');branch.textContent=data.branch||'分离 HEAD';branch.title=branch.textContent;
-  const commits=data.rows.filter(row=>row.hash),{cells,width}=graphCells(commits);rows.parentElement.style.setProperty('--graph-width',width+'px');
+  const commits=data.rows.filter(row=>row.hash);
+  // Search hits can skip ancestors; omit edges instead of accumulating orphan lanes.
+  const {cells,width}=graphCells(query?.text?commits.map(row=>({...row,parents:[]})):commits);rows.parentElement.style.setProperty('--graph-width',width+'px');
   let count=0;
   for(const row of commits){
-    const item=document.createElement('div');item.className='row'+(isHead(row)?' current':'');
+    const item=document.createElement('div');item.dataset.hash=row.hash;item.className='row'+(isHead(row)?' current':'')+(selectedHash===row.hash?' selected':'');
     item.dataset.vscodeContext=JSON.stringify({webviewSection:'commit',gitpeekCommitHash:row.hash,gitpeekGraphRepoId:repoId,gitpeekGraphGeneration:generation,preventDefaultContextMenuItems:true});
     const graph=cells[count++];
     const detail=document.createElement('button');detail.type='button';detail.className='commit';detail.dataset.hash=row.hash;
@@ -329,11 +350,12 @@ function draw(){
     rows.append(item);
   }
   status.textContent=count?'已显示 '+count+' 条提交'+(data.hasMore?' · 可加载更多':''):'仓库暂无提交';
-  if(!count)rows.append(label('empty','还没有提交，完成首次提交后即可查看历史。'));
+  if(query?.text||query?.scope==='current')status.textContent=(query.scope==='current'?'当前分支':'全部分支')+(query.text?' · '+({message:'消息',author:'作者',hash:'Hash'}[query.kind])+': '+query.text:'')+' · '+(count?'已显示 '+count+' 条提交'+(data.hasMore?' · 可加载更多':''):'没有匹配的提交');
+  if(!count)rows.append(label('empty',query?.text?'没有匹配的提交，请修改搜索条件或清除搜索。':'还没有提交，完成首次提交后即可查看历史。'));
   more.hidden=!data.hasMore;
 }
-document.addEventListener('click',event=>{const action=event.target.closest('[data-action]');if(action){vscode.postMessage({type:action.dataset.action});return}const commitActions=event.target.closest('[data-actions-hash]');if(commitActions){vscode.postMessage({type:'actions',hash:commitActions.dataset.actionsHash});return}const commit=event.target.closest('[data-hash]');if(commit)vscode.postMessage({type:'commit',hash:commit.dataset.hash})});
-window.addEventListener('message',event=>{const message=event.data;if(message.type==='loading')status.textContent='正在加载…';else if(message.type==='error')status.textContent=message.message;else if(message.type==='render'){data=message.data;repoId=message.repoId;generation=message.generation;for(const action of ['cherryContinue','cherryAbort'])document.querySelector('[data-action="'+action+'"]').hidden=!message.cherryInProgress;draw()}else if(message.type==='avatars'){avatars=message.avatars||{};draw()}});
+document.addEventListener('click',event=>{const action=event.target.closest('[data-action]');if(action){if(action.dataset.action==='clearSearch'){searchText.value='';searchDirty=false;vscode.postMessage({type:'search',kind:searchKind.value,text:'',scope:searchScope.value})}else vscode.postMessage({type:action.dataset.action});return}const commitActions=event.target.closest('[data-actions-hash]');if(commitActions){vscode.postMessage({type:'actions',hash:commitActions.dataset.actionsHash});return}const commit=event.target.closest('[data-hash]');if(commit){selectedHash=commit.dataset.hash;vscode.postMessage({type:'commit',hash:commit.dataset.hash});draw()}});
+window.addEventListener('message',event=>{const message=event.data;if(message.type==='loading'){data=undefined;rows.replaceChildren();more.hidden=true;status.textContent='正在加载…'}else if(message.type==='error'){rows.replaceChildren(label('empty',message.message));more.hidden=true;status.textContent=message.message;}else if(message.type==='render'){const switchedRepo=repoId!==message.repoId;data=message.data;query=message.query;repoId=message.repoId;generation=message.generation;if(query&&(!searchDirty||switchedRepo)){searchText.value=query.text;searchKind.value=query.kind;searchScope.value=query.scope;searchDirty=false}for(const action of ['cherryContinue','cherryAbort'])document.querySelector('[data-action="'+action+'"]').hidden=!message.cherryInProgress;draw()}else if(message.type==='select'&&message.repoId===repoId&&message.generation===generation){selectedHash=message.hash;draw();[...rows.children].find(row=>row.dataset.hash===selectedHash)?.scrollIntoView?.({block:'nearest'})}else if(message.type==='avatars'){avatars=message.avatars||{};draw()}});
 vscode.postMessage({type:'ready'});
 </script></body></html>`;
 }

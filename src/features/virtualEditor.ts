@@ -6,6 +6,6 @@ export function isGitPeekEditor(editor: vscode.TextEditor | undefined): boolean 
   if (input instanceof vscode.TabInputTextDiff) {
     return input.original.scheme.startsWith('gitpeek-') || input.modified.scheme.startsWith('gitpeek-');
   }
-  if (input instanceof vscode.TabInputWebview && input.viewType === 'gitpeek.commitGraph') return true;
+  if (input instanceof vscode.TabInputWebview && ['gitpeek.commitGraph', 'mainThreadWebview-gitpeek.commitGraph'].includes(input.viewType)) return true;
   return input instanceof vscode.TabInputText && input.uri.scheme.startsWith('gitpeek-');
 }

@@ -31,12 +31,14 @@ async function main() {
 
     // Exercise the actual webview script without adding a DOM dependency.
     class Element {
-      constructor(name) { this.name = name; this.children = []; this.attributes = {}; this.dataset = {}; this.style = { setProperty() {} }; }
+      constructor(name) { this.name = name; this.children = []; this.attributes = {}; this.dataset = {}; this.style = { setProperty: (name, value) => { this.style[name] = value; } }; }
       append(...children) { this.children.push(...children); }
       replaceChildren(...children) { this.children = children; }
       setAttribute(name, value) { this.attributes[name] = value; }
+      addEventListener(type, listener) { this[type] = listener; }
+      scrollIntoView(options) { this.scrollOptions = options; }
     }
-    const elements = Object.fromEntries(['rows', 'status', 'more', 'branch', 'cherryContinue', 'cherryAbort'].map(id => [id, new Element('div')]));
+    const elements = Object.fromEntries(['rows', 'status', 'more', 'branch', 'cherryContinue', 'cherryAbort', 'search', 'searchKind', 'searchText', 'searchScope'].map(id => [id, new Element('div')]));
     elements.rows.parentElement = new Element('main');
     const messages = [];
     let receive, click;
@@ -104,7 +106,59 @@ async function main() {
     assert.equal(elements.rows.children[0].className, 'empty');
     assert.equal(elements.more.hidden, true);
     assert.equal(elements.cherryContinue.hidden, true);
-    console.log('Commit graph Webview passed (CSP, SVG lanes, refs, empty state and actions).');
+    elements.searchKind.value = 'author'; elements.searchText.value = 'Ancient'; elements.searchScope.value = 'all';
+    elements.search.submit({ preventDefault() {} });
+    assert.deepEqual(JSON.parse(JSON.stringify(messages.at(-1))), { type: 'search', kind: 'author', text: 'Ancient', scope: 'all' });
+    receive({ data: { type: 'render', data: { branch: 'main', rows: [root], hasMore: false }, query: { kind: 'author', text: 'Ancient', scope: 'all' } } });
+    assert.match(elements.status.textContent, /全部分支 · 作者: Ancient/);
+    click({ target: { closest: selector => selector === '[data-action]' ? { dataset: { action: 'clearSearch' } } : null } });
+    assert.equal(messages.at(-1).type, 'search'); assert.equal(messages.at(-1).text, '');
+    const renderSearch = (query, commits = [], hasMore = false, repoId = 'search-repo') => receive({ data: {
+      type: 'render', data: { branch: 'main', rows: commits, hasMore }, query, repoId, generation: 8,
+    } });
+    renderSearch({ kind: 'message', text: '', scope: 'all' }, [root]);
+    elements.searchText.value = 'first'; elements.search.submit({ preventDefault() {} });
+    elements.searchText.value = 'second'; elements.search.input();
+    elements.searchKind.value = 'author'; elements.searchScope.value = 'current'; elements.search.change();
+    renderSearch({ kind: 'message', text: 'first', scope: 'all' });
+    assert.equal(elements.searchText.value, 'second', 'a completed query does not erase newer draft input');
+    assert.equal(elements.searchKind.value, 'author'); assert.equal(elements.searchScope.value, 'current');
+    assert.match(elements.status.textContent, /消息: first/);
+    assert.match(elements.rows.children[0].textContent, /没有匹配的提交/);
+    assert.doesNotMatch(elements.rows.children[0].textContent, /还没有提交/);
+    elements.search.submit({ preventDefault() {} });
+    assert.deepEqual(JSON.parse(JSON.stringify(messages.at(-1))), { type: 'search', kind: 'author', text: 'second', scope: 'current' });
+    const hits = Array.from({ length: 100 }, (_, index) => ({
+      hash: index.toString(16).padStart(40, '0'), parents: [(index + 100).toString(16).padStart(40, '0')], subject: 'second',
+    }));
+    renderSearch({ kind: 'author', text: 'second', scope: 'current' }, hits, true);
+    assert.equal(elements.rows.parentElement.style['--graph-width'], '56px', 'skipped ancestors do not widen the search graph');
+    assert.equal(elements.rows.children[0].children[0].children[0].children.some(child => child.name === 'path'), false, 'filtered results do not draw unverifiable parent edges');
+    assert.equal(elements.more.hidden, false);
+    click({ target: { closest: selector => selector === '[data-action]' ? { dataset: { action: 'loadMore' } } : null } });
+    assert.equal(messages.at(-1).type, 'loadMore');
+    receive({ data: { type: 'select', hash: hits[37].hash, repoId: 'search-repo', generation: 8 } });
+    assert.equal(elements.rows.children[37].className, 'row selected');
+    assert.equal(elements.rows.children[37].scrollOptions.block, 'nearest', 'detail navigation locates the commit in the graph');
+    receive({ data: { type: 'select', hash: hits[42].hash, repoId: 'another-repo', generation: 8 } });
+    assert.equal(elements.rows.children[37].className, 'row selected', 'selection from another repository is discarded');
+    receive({ data: { type: 'select', hash: hits[42].hash, repoId: 'search-repo', generation: 7 } });
+    assert.equal(elements.rows.children[37].className, 'row selected', 'stale graph selections are discarded');
+    click({ target: { closest: selector => selector === '[data-action]' ? { dataset: { action: 'clearSearch' } } : null } });
+    assert.deepEqual(JSON.parse(JSON.stringify(messages.at(-1))), { type: 'search', kind: 'author', text: '', scope: 'current' });
+    renderSearch({ kind: 'author', text: '', scope: 'current' }, [merge, root]);
+    assert.equal(elements.rows.children[0].children[0].children[0].children.some(child => child.name === 'path'), true, 'clearing search restores normal graph edges');
+    elements.searchText.value = 'unsent draft'; elements.search.input();
+    renderSearch({ kind: 'message', text: '', scope: 'all' }, [root], false, 'other-repo');
+    assert.equal(elements.searchText.value, '', 'repository changes reset draft queries');
+    assert.equal(elements.searchScope.value, 'all');
+    receive({ data: { type: 'loading' } });
+    assert.equal(elements.rows.children.length, 0, 'loading hides inactive rows from the previous query');
+    assert.equal(elements.more.hidden, true);
+    receive({ data: { type: 'error', message: 'Hash 查询失败' } });
+    assert.equal(elements.rows.children[0].textContent, 'Hash 查询失败');
+    assert.equal(elements.more.hidden, true, 'failed queries do not keep the previous load-more action');
+    console.log('Commit graph Webview passed (CSP, SVG lanes, refs, empty state, actions and search regressions).');
   } finally {
     Module._load = originalLoad;
     if (!directory.startsWith(tmpdir() + sep)) throw new Error('Temporary graph view escaped temp directory');
