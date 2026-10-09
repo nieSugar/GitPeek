@@ -88,14 +88,24 @@ npm run package
 在 VS Code 中安装生成的 VSIX：
 
 ```sh
-code --install-extension gitpeek-0.6.0.vsix
+code --install-extension gitpeek-0.7.0.vsix
 ```
 
 也可以在 VS Code 中运行 **扩展：从 VSIX 安装...**，然后选择生成的文件。
 
+## 自动打包与发布
+
+每次推送分支或创建 Pull Request，GitHub Actions 都会在 Windows 和 Linux 上运行测试、类型检查并生成 VSIX，可从对应 CI 运行的 Artifacts 下载。正式版本安装包见 [GitHub Releases](https://github.com/nieSugar/GitPeek/releases)。
+
+发布新版本时，同步更新 `package.json` 与 `package-lock.json` 的版本号，提交并推送后，为该提交创建相同版本的标签（例如 `v0.7.0`），再推送标签。Release 工作流会检出标签对应的代码，核对版本、运行测试并打包，将 VSIX 附加到 GitHub Release。
+
+补发历史版本：先将版本标签指向该版本的历史提交并推送，再在 Actions → Release → Run workflow 中选择 `main`，填写对应标签。手动补发不会把旧版设为 Latest；已有同名安装包会保留。
+
+本轮新增整文件归属、历史版本导航、编辑中选区追溯和交互式 Rebase，以 v0.7.0 发布。历史版本 v0.1.0～v0.6.0 使用各自验收提交补发。
+
 ## 范围与限制
 
-当前开发版在 GitPeek 0.6.0 基础上增加历史筛选、整文件归属、版本导航、编辑中选区追溯和交互式 rebase。Pull Request 集成、AI 聊天、按行暂存及丢弃修改仍不在范围内。智能提交仅根据已暂存文件的路径和状态提供措辞建议，提交前请检查生成的信息。二进制差异仅显示元数据，不显示文件内容。
+GitPeek 0.7.0 在 0.6.0 基础上增加历史筛选、整文件归属、版本导航、编辑中选区追溯和交互式 rebase。Pull Request 集成、AI 聊天、按行暂存及丢弃修改仍不在范围内。智能提交仅根据已暂存文件的路径和状态提供措辞建议，提交前请检查生成的信息。二进制差异仅显示元数据，不显示文件内容。
 
 代码变化搜索使用 Git `-S`，区分大小写；同一文本只改变位置而出现次数不变时不会命中。路径筛选只匹配填写的文件或目录，不跨重命名前路径追踪；追踪重命名请使用文件历史。
 

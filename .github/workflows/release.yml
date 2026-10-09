@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing version tag to package, for example v0.6.0'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Validate tag format
+        shell: bash
+        run: '[[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]'
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - name: Verify source and package versions
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
+          node -e 'const assert = require("node:assert/strict"); const pkg = require("./package.json"); const lock = require("./package-lock.json"); assert.equal(process.env.RELEASE_TAG, `v${pkg.version}`); assert.equal(lock.version, pkg.version); assert.equal(lock.packages[""].version, pkg.version);'
+      - run: npm ci
+      - run: npm test
+      - run: npm run package
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gitpeek-${{ env.RELEASE_TAG }}
+          path: gitpeek-*.vsix
+          if-no-files-found: error
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          vsix="gitpeek-${RELEASE_TAG#v}.vsix"
+          test -f "$vsix"
+          if gh release view "$RELEASE_TAG" --json tagName > /dev/null 2>&1; then
+            if gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | grep -Fxq "$vsix"; then
+              echo "Release already contains $vsix; keeping the existing asset."
+            else
+              gh release upload "$RELEASE_TAG" "$vsix"
+            fi
+          elif [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+            gh release create "$RELEASE_TAG" "$vsix" --verify-tag --title "GitPeek $RELEASE_TAG" --generate-notes --latest=false
+          else
+            gh release create "$RELEASE_TAG" "$vsix" --verify-tag --title "GitPeek $RELEASE_TAG" --generate-notes
+          fi
