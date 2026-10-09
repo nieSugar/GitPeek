@@ -15,7 +15,8 @@ async function main() {
   let enabled = true;
   const vscode = {
     EventEmitter: class { event = () => disposable; fire() {} dispose() {} },
-    TreeItem: class { constructor(label) { this.label = label; } },
+    TreeItem: class { constructor(label, collapsibleState) { this.label = label; this.collapsibleState = collapsibleState; } },
+    TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
     Uri: { from: value => ({ ...value, toString: () => JSON.stringify(value) }) },
     workspace: { textDocuments: [], getConfiguration: () => ({ get: (key, fallback) => key === 'enabled' ? enabled : fallback }),
       onDidChangeConfiguration: handler => (configurationHandlers.push(handler), disposable),
@@ -41,7 +42,8 @@ async function main() {
     const repo = { id: 'first', root: path.join(temp, 'repo') };
     fs.mkdirSync(repo.root); git(repo, 'init', '-b', 'main'); git(repo, 'config', 'user.name', 'Test'); git(repo, 'config', 'user.email', 'test@example.invalid'); git(repo, 'config', 'core.autocrlf', 'false');
     write(repo, '旧 [file].txt', 'original\n'); write(repo, 'deleted.txt', 'deleted\n'); write(repo, 'binary.bin', Buffer.from([0, 1, 2]));
-    const root = commit(repo, 'root');
+    const rootMessage = 'root\n\nDetailed explanation\n\nPreserve the complete message.';
+    const root = commit(repo, rootMessage);
     git(repo, 'mv', '旧 [file].txt', 'middle.txt'); git(repo, 'rm', 'deleted.txt'); write(repo, 'binary.bin', Buffer.from([0, 3, 4]));
     const renamed = commit(repo, 'rename binary delete');
     git(repo, 'mv', 'middle.txt', 'current.txt'); write(repo, '旧 [file].txt', 'unrelated reused old name\n'); write(repo, 'deleted.txt', 'unrelated reused deleted name\n');
@@ -61,14 +63,40 @@ async function main() {
     const context = { subscriptions: [] };
     const details = registerCommitFeatures(context, service);
     await details.showCommit(repo, root);
-    const detailRows = () => views.get('gitpeek.commitDetails').getChildren();
+    const detailProvider = views.get('gitpeek.commitDetails');
+    const detailRows = () => detailProvider.getChildren();
+    const heading = detailRows()[0];
+    assert.equal(heading.label, 'root', 'the subject is the primary heading');
+    assert.equal(heading.description, rootDetail.shortHash);
+    assert.equal(heading.commitTarget.hash, root, 'copy and compare keep the full immutable hash');
+    assert.ok(heading.tooltip.includes(repo.root) && heading.tooltip.includes(root) && heading.tooltip.includes(rootMessage));
+    assert.equal(detailRows()[1].label, 'Test');
+    assert.ok(detailRows()[1].description.endsWith(' · ' + path.basename(repo.root)));
+    const body = detailRows().find(row => row.label === '完整提交说明');
+    assert.equal(body.collapsibleState, vscode.TreeItemCollapsibleState.Collapsed, 'long messages do not push files out of view');
+    assert.ok(detailRows().findLastIndex(row => row.contextValue === 'gitpeek.detailFile') < detailRows().indexOf(body));
+    assert.deepEqual(detailProvider.getChildren(body).map(row => row.label), rootMessage.split('\n').map(line => line || ' '));
+    assert.deepEqual(detailProvider.getChildren(heading), [], 'leaf nodes do not recursively repeat the whole tree');
+    assert.deepEqual(detailProvider.getChildren(detailProvider.getChildren(body)[0]), []);
+    const visibleAt = executed.findIndex(([name, key, value]) => name === 'setContext' && key === 'gitpeek.hasCommitDetails' && value === true);
+    assert.ok(visibleAt >= 0 && visibleAt < executed.findIndex(([name]) => name === 'gitpeek.commitDetails.focus'), 'the contextual view is visible before focus');
     const detailFile = detailRows().find(row => row.commitTarget?.file === '旧 [file].txt');
     assert.equal(detailFile.fileTarget.path, 'current.txt');
     assert.equal(detailFile.commitTarget.workspacePath, 'current.txt');
     assert.equal(detailRows().find(row => row.commitTarget?.file === 'deleted.txt').commitTarget.workspacePathKnown, false);
     await commands.get('gitpeek.internal.details.pin')(); await details.showCommit(repo, tip);
-    assert.ok(detailRows().some(row => row.label === root));
-    await commands.get('gitpeek.internal.details.unpin')(); assert.ok(detailRows().some(row => row.label === tip));
+    assert.ok(detailRows().some(row => row.commitTarget?.hash === root));
+    await commands.get('gitpeek.internal.details.unpin')(); assert.ok(detailRows().some(row => row.commitTarget?.hash === tip));
+    assert.ok(!detailRows().some(row => row.label === '完整提交说明'), 'one-line messages need no extra disclosure row');
+    const focusCount = executed.filter(([name]) => name === 'gitpeek.commitDetails.focus').length;
+    const disabledDetails = details.showCommit(repo, root);
+    enabled = false;
+    for (const handler of configurationHandlers) handler({ affectsConfiguration: key => key === 'gitpeek.enabled' });
+    await disabledDetails;
+    assert.equal(executed.filter(([name]) => name === 'gitpeek.commitDetails.focus').length, focusCount, 'disabling while the view becomes visible cannot focus stale details');
+    assert.deepEqual(executed.findLast(([name, key]) => name === 'setContext' && key === 'gitpeek.hasCommitDetails'), ['setContext', 'gitpeek.hasCommitDetails', false]);
+    enabled = true;
+    await details.showCommit(repo, tip);
 
     registerRevisionCompare(context, service);
     const run = (command, ...args) => commands.get('gitpeek.internal.compare.' + command)(...args);
@@ -98,6 +126,7 @@ async function main() {
     await atShow; enabled = false;
     for (const handler of configurationHandlers) handler({ affectsConfiguration: key => key === 'gitpeek.enabled' });
     release(); await pending;
+    assert.deepEqual(executed.findLast(([name, key]) => name === 'setContext' && key === 'gitpeek.hasCommitDetails'), ['setContext', 'gitpeek.hasCommitDetails', false]);
     assert.equal(executed.filter(([name]) => name === 'vscode.diff').length, beforeDisabled, 'disabled async comparisons cannot open new diff editors');
     service.run = originalRun; enabled = true;
     assert.equal(await content.provideTextDocumentContent(firstDiff[1]), firstText, 'existing snapshot URIs remain readable after disable');
@@ -107,7 +136,7 @@ async function main() {
     git(repo, 'switch', '-c', 'side', root); write(repo, 'side.txt', 'side\n'); const side = commit(repo, 'side');
     git(repo, 'switch', 'main'); git(repo, 'merge', '--no-ff', 'side', '-m', 'merge side');
     assert.equal((await resolveWorkspacePaths(service, repo, side, [{ path: 'side.txt', status: 'A' }])).size, 0, 'non-first-parent origins do not invent mappings');
-    console.log('Details/compare regressions passed: verified rename identities, deletion/name reuse, binary references, pin, stale/disabled actions and immutable URI reload.');
+    console.log('Details/compare regressions passed: verified rename identities, deletion/name reuse, binary references, compact details, folded messages, contextual visibility, pin, stale/disabled actions and immutable URI reload.');
   } finally {
     Module._load = originalLoad;
     if (!path.resolve(temp).startsWith(path.resolve(os.tmpdir()) + path.sep)) throw new Error('Test directory escaped temp root');

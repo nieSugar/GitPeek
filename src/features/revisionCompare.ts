@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { readFile } from 'node:fs/promises';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 import { parseNameStatus, parseNumStat } from '../git/GitParser';
 import type { GitService } from '../git/GitService';
 import type { CommitTarget, FileChange, Repository } from '../git/types';
@@ -49,7 +49,7 @@ export async function workingContents(git: GitService, target: CommitTarget) {
 }
 
 export function registerRevisionCompare(context: vscode.ExtensionContext, git: GitService): void {
-  let selected: CommitTarget | undefined;
+  let selected: (CommitTarget & { subject: string }) | undefined;
   let generation = 0;
   let diffGeneration = 0;
   let activeComparison: (Awaited<ReturnType<typeof compareRevisions>> & { generation: number }) | undefined;
@@ -60,6 +60,11 @@ export function registerRevisionCompare(context: vscode.ExtensionContext, git: G
   const repositories = new Map<string, Repository>();
   const enabled = () => vscode.workspace.getConfiguration('gitpeek').get('enabled', true);
   const targetOf = (item?: { commitTarget?: CommitTarget }) => item?.commitTarget;
+  const commitRow = (side: string, target: CommitTarget & { subject: string }) => Object.assign(new vscode.TreeItem(`${side}：${target.subject}`), {
+    description: target.hash.slice(0, 7), tooltip: `${side}：${target.subject}\n${target.hash}\n仓库：${target.repo.root}`,
+  });
+  const view = vscode.window.createTreeView('gitpeek.comparison', { treeDataProvider: { onDidChangeTreeData: changed.event, getTreeItem: (item: vscode.TreeItem) => item, getChildren: () => rows } });
+  void vscode.commands.executeCommand('setContext', 'gitpeek.hasComparison', false);
   const showContents = async (repo: Repository, before: string, after: string, file: string, title: string, refs?: { before: CommitContentRef; after: CommitContentRef }) => {
     if (!enabled()) return;
     const id = ++serial;
@@ -76,8 +81,7 @@ export function registerRevisionCompare(context: vscode.ExtensionContext, git: G
     if (!enabled()) return;
     try { await action(item); } catch (error) { if (enabled()) await vscode.window.showErrorMessage(`GitPeek：比较失败：${String(error)}`); }
   };
-  context.subscriptions.push(changed,
-    vscode.window.createTreeView('gitpeek.comparison', { treeDataProvider: { onDidChangeTreeData: changed.event, getTreeItem: (item: vscode.TreeItem) => item, getChildren: () => rows } }),
+  context.subscriptions.push(changed, view,
     vscode.workspace.registerTextDocumentContentProvider('gitpeek-compare', { provideTextDocumentContent: async uri => {
       const text = contents.get(uri.toString());
       if (text !== undefined) return text;
@@ -93,28 +97,38 @@ export function registerRevisionCompare(context: vscode.ExtensionContext, git: G
       const request = ++generation;
       diffGeneration++; activeComparison = undefined;
       const hash = await resolveCommit(git, target.repo, target.hash);
+      const subject = (await git.run(target.repo, ['show', '-s', '--format=%s', hash, '--'])).trim() || '（无提交说明）';
       if (request !== generation || !enabled()) return;
-      selected = { ...target, hash };
-      rows = [new vscode.TreeItem(`${target.repo.root} · 已选择 ${hash.slice(0, 7)}，请右键另一提交进行比较。`)]; changed.fire();
-      await vscode.commands.executeCommand('gitpeek.comparison.focus');
+      selected = { ...target, hash, subject };
+      view.description = basename(target.repo.root);
+      rows = [commitRow('起点', selected), new vscode.TreeItem('右键另一提交，选择“与所选提交比较”。')]; changed.fire();
+      await vscode.commands.executeCommand('setContext', 'gitpeek.hasComparison', true);
+      if (request === generation && enabled()) await vscode.commands.executeCommand('gitpeek.comparison.focus');
     })),
     vscode.commands.registerCommand('gitpeek.internal.compare.compareSelected', guarded(async item => {
       const target = targetOf(item); if (!target) return;
       if (!selected) { await vscode.window.showInformationMessage('请先右键一个提交并选择“选择此提交进行比较”。'); return; }
-      if (selected.repo.id !== target.repo.id) throw new Error('不能比较不同仓库的提交，请重新选择起点。');
+      if (selected.repo.id !== target.repo.id || selected.repo.root !== target.repo.root) throw new Error('不能比较不同仓库的提交，请重新选择起点。');
+      const origin = selected;
       const request = ++generation;
       diffGeneration++; activeComparison = undefined;
-      rows = [new vscode.TreeItem('正在比较两个提交…')]; changed.fire();
+      rows = [commitRow('起点', origin), new vscode.TreeItem('正在加载终点及变更…')]; changed.fire();
       try {
-        const result = { ...await compareRevisions(git, target.repo, selected.hash, target.hash), generation: request };
-        const workspacePaths = await resolveWorkspacePaths(git, target.repo, result.right, result.files);
+        const result = { ...await compareRevisions(git, target.repo, origin.hash, target.hash), generation: request };
+        const [workspacePaths, subject] = await Promise.all([
+          resolveWorkspacePaths(git, target.repo, result.right, result.files),
+          git.run(target.repo, ['show', '-s', '--format=%s', result.right, '--']),
+        ]);
         if (request !== generation || !enabled()) return;
         activeComparison = result;
-        const title = `${result.left.slice(0, 7)} → ${result.right.slice(0, 7)}`;
-        rows = [new vscode.TreeItem(`${target.repo.root} · ${title}`),
-          new vscode.TreeItem(`${result.files.length} 个文件 · +${result.files.reduce((n, f) => n + (f.additions ?? 0), 0)} −${result.files.reduce((n, f) => n + (f.deletions ?? 0), 0)}`),
+        rows = [commitRow('起点', origin), commitRow('终点', { repo: target.repo, hash: result.right, subject: subject.trim() || '（无提交说明）' }),
+          Object.assign(new vscode.TreeItem(`${result.files.length} 个变更文件`), {
+            description: `+${result.files.reduce((n, f) => n + (f.additions ?? 0), 0)} −${result.files.reduce((n, f) => n + (f.deletions ?? 0), 0)}`,
+          }),
+          ...(!result.files.length ? [new vscode.TreeItem('两个提交的文件内容相同。')] : []),
           ...result.files.map(file => Object.assign(new vscode.TreeItem(`${file.status} ${file.path}`), {
             description: file.binary ? '二进制文件' : `+${file.additions ?? 0} −${file.deletions ?? 0}`,
+            tooltip: `${file.oldPath ? `${file.oldPath} → ` : ''}${file.path}\n${result.left} → ${result.right}\n仓库：${target.repo.root}`,
             contextValue: 'gitpeek.comparisonFile', fileTarget: { repo: target.repo, path: workspacePaths.get(file.path) ?? file.path, workspacePathKnown: workspacePaths.has(file.path) },
             command: { command: 'gitpeek.internal.compare.openDiff', title: '打开差异', arguments: [result, file] },
           }))]; changed.fire();
@@ -124,8 +138,10 @@ export function registerRevisionCompare(context: vscode.ExtensionContext, git: G
         rows = [new vscode.TreeItem(`比较失败：${String(error)}`)]; changed.fire(); throw error;
       }
     })),
-    vscode.commands.registerCommand('gitpeek.internal.compare.clear', () => {
-      generation++; diffGeneration++; activeComparison = undefined; selected = undefined; rows = [new vscode.TreeItem('比较选择已清除。')]; changed.fire();
+    vscode.commands.registerCommand('gitpeek.internal.compare.clear', async () => {
+      generation++; diffGeneration++; activeComparison = undefined; selected = undefined; view.description = undefined;
+      rows = [new vscode.TreeItem('比较选择已清除。')]; changed.fire();
+      await vscode.commands.executeCommand('setContext', 'gitpeek.hasComparison', false);
     }),
     vscode.commands.registerCommand('gitpeek.internal.compare.openDiff', async (result: typeof activeComparison, file: FileChange & { binary: boolean }) => {
       if (!enabled() || !result || result.generation !== activeComparison?.generation || result.repo.id !== activeComparison.repo.id || result.repo.root !== activeComparison.repo.root) return;
@@ -159,7 +175,11 @@ export function registerRevisionCompare(context: vscode.ExtensionContext, git: G
       await showContents(target.repo, data.before, data.after, data.file, `${data.file} (${data.hash.slice(0, 7)} → 工作区磁盘)`);
     })),
     vscode.workspace.onDidChangeConfiguration(event => {
-      if (event.affectsConfiguration('gitpeek.enabled') && !enabled()) { generation++; diffGeneration++; activeComparison = undefined; selected = undefined; rows = []; changed.fire(); }
+      if (event.affectsConfiguration('gitpeek.enabled') && !enabled()) {
+        generation++; diffGeneration++; activeComparison = undefined; selected = undefined; view.description = undefined;
+        rows = []; changed.fire();
+        void vscode.commands.executeCommand('setContext', 'gitpeek.hasComparison', false);
+      }
     }),
   );
 }

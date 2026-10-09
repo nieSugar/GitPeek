@@ -28,6 +28,14 @@ async function main() {
     assert.match(script, /type:'commit',hash:commit\.dataset\.hash/);
     assert.match(html, /继续 Cherry-pick/);
     assert.match(html, /中止 Cherry-pick/);
+    const filters = /<details class="filters">([\s\S]*?)<\/details>/.exec(html)?.[1];
+    assert.ok(filters, 'advanced filters use native details and start collapsed');
+    assert.match(filters, /<summary><span id="filterSummary">高级筛选<\/span><span id="searchDraft" hidden>条件未应用<\/span><\/summary>/);
+    for (const id of ['searchPath', 'searchSince', 'searchUntil', 'dateSearchHelp']) {
+      assert.ok(filters.includes('id="' + id + '"'), id + ' is contained in the collapsible filters');
+    }
+    assert.match(html, /id="searchText"[^>]*aria-describedby="codeSearchHelp"/);
+    assert.match(html, /id="codeSearchHelp"[^>]*hidden/);
 
     // Exercise the actual webview script without adding a DOM dependency.
     class Element {
@@ -38,7 +46,7 @@ async function main() {
       addEventListener(type, listener) { this[type] = listener; }
       scrollIntoView(options) { this.scrollOptions = options; }
     }
-    const elements = Object.fromEntries(['rows', 'status', 'more', 'branch', 'cherryContinue', 'cherryAbort', 'search', 'searchKind', 'searchText', 'searchScope', 'searchPath', 'searchSince', 'searchUntil'].map(id => [id, new Element('div')]));
+    const elements = Object.fromEntries(['rows', 'status', 'more', 'branch', 'cherryContinue', 'cherryAbort', 'search', 'searchKind', 'searchText', 'searchScope', 'searchPath', 'searchSince', 'searchUntil', 'filterSummary', 'searchDraft', 'codeSearchHelp'].map(id => [id, new Element('div')]));
     elements.rows.parentElement = new Element('main');
     const messages = [];
     let receive, click;
@@ -117,16 +125,25 @@ async function main() {
       type: 'render', data: { branch: 'main', rows: commits, hasMore }, query, repoId, generation: 8,
     } });
     renderSearch({ kind: 'message', text: '', scope: 'all' }, [root]);
+    assert.equal(elements.filterSummary.textContent, '高级筛选');
+    assert.equal(elements.searchDraft.hidden, true);
+    assert.equal(elements.codeSearchHelp.hidden, true, 'code-search guidance is absent for ordinary message searches');
     elements.searchText.value = 'first'; elements.search.submit({ preventDefault() {} });
     elements.searchText.value = 'second'; elements.search.input();
     elements.searchKind.value = 'author'; elements.searchScope.value = 'current'; elements.search.change();
+    assert.equal(elements.searchDraft.hidden, false, 'editing the primary controls marks the draft as unapplied');
+    receive({ data: { type: 'loading' } });
+    assert.equal(elements.searchText.value, 'second', 'loading retains the unsent query');
+    assert.equal(elements.searchDraft.hidden, false, 'loading does not mark unsent conditions as applied');
     renderSearch({ kind: 'message', text: 'first', scope: 'all' });
     assert.equal(elements.searchText.value, 'second', 'a completed query does not erase newer draft input');
     assert.equal(elements.searchKind.value, 'author'); assert.equal(elements.searchScope.value, 'current');
+    assert.equal(elements.searchDraft.hidden, false, 'an earlier response does not clear the unapplied warning');
     assert.match(elements.status.textContent, /消息: first/);
     assert.match(elements.rows.children[0].textContent, /没有匹配的提交/);
     assert.doesNotMatch(elements.rows.children[0].textContent, /还没有提交/);
     elements.search.submit({ preventDefault() {} });
+    assert.equal(elements.searchDraft.hidden, true, 'submitting applies the current draft');
     assert.deepEqual(JSON.parse(JSON.stringify(messages.at(-1))), { type: 'search', kind: 'author', text: 'second', scope: 'current' });
     const hits = Array.from({ length: 100 }, (_, index) => ({
       hash: index.toString(16).padStart(40, '0'), parents: [(index + 100).toString(16).padStart(40, '0')], subject: 'second',
@@ -152,20 +169,35 @@ async function main() {
     renderSearch({ kind: 'message', text: '', scope: 'all' }, [root], false, 'other-repo');
     assert.equal(elements.searchText.value, '', 'repository changes reset draft queries');
     assert.equal(elements.searchScope.value, 'all');
+    assert.equal(elements.searchDraft.hidden, true, 'a repository switch clears the previous repository draft');
     elements.searchKind.value = 'code'; elements.searchText.value = ' 中文 [.*] ';
     elements.searchPath.value = 'src/[x].txt'; elements.searchSince.value = '2024-03-01'; elements.searchUntil.value = '2024-03-02';
+    elements.search.change();
+    assert.equal(elements.codeSearchHelp.hidden, false, 'choosing code search reveals its literal-match guidance before submission');
+    assert.equal(elements.filterSummary.textContent, '高级筛选（3 项）', 'collapsed summary exposes the number of populated advanced fields');
+    assert.equal(elements.searchDraft.hidden, false);
     elements.search.submit({ preventDefault() {} });
+    assert.equal(elements.searchDraft.hidden, true);
     assert.deepEqual(JSON.parse(JSON.stringify(messages.at(-1))), { type: 'search', kind: 'code', text: ' 中文 [.*] ', scope: 'all', path: 'src/[x].txt', since: '2024-03-01', until: '2024-03-02' });
     renderSearch({ kind: 'message', text: '', scope: 'all', path: 'src/[x].txt', since: '2024-03-01', until: '2024-03-02' }, [merge, root], true, 'other-repo');
+    assert.equal(elements.codeSearchHelp.hidden, true, 'rendering another search type hides code guidance');
+    assert.equal(elements.filterSummary.textContent, '高级筛选（3 项）');
     assert.match(elements.status.textContent, /路径: src\/\[x\]\.txt · 从 2024-03-01 · 至 2024-03-02/);
     assert.equal(elements.rows.children[0].children[0].children[0].children.some(child => child.name === 'path'), false, 'path/date filters also omit unverifiable graph edges');
-    elements.searchPath.value = 'draft.txt'; elements.searchUntil.value = '2024-03-03'; elements.search.input();
+    elements.searchKind.value = 'code'; elements.searchPath.value = 'draft.txt'; elements.searchSince.value = ''; elements.searchUntil.value = '2024-03-03'; elements.search.input();
     renderSearch({ kind: 'message', text: '', scope: 'all', path: 'src/[x].txt', until: '2024-03-02' }, [root], false, 'other-repo');
     assert.equal(elements.searchPath.value, 'draft.txt'); assert.equal(elements.searchUntil.value, '2024-03-03', 'new filter drafts survive earlier responses');
+    assert.equal(elements.filterSummary.textContent, '高级筛选（2 项）', 'the collapsed count describes the retained draft, not the earlier response');
+    assert.equal(elements.searchDraft.hidden, false);
+    assert.equal(elements.codeSearchHelp.hidden, false, 'guidance follows the retained draft search type');
     click({ target: { closest: selector => selector === '[data-action]' ? { dataset: { action: 'clearSearch' } } : null } });
-    assert.deepEqual(JSON.parse(JSON.stringify(messages.at(-1))), { type: 'search', kind: 'message', text: '', scope: 'all' }, 'clear removes every extra filter');
+    assert.deepEqual(JSON.parse(JSON.stringify(messages.at(-1))), { type: 'search', kind: 'code', text: '', scope: 'all' }, 'clear removes every extra filter while preserving the selected search type and scope');
     assert.equal(elements.searchPath.value, ''); assert.equal(elements.searchSince.value, ''); assert.equal(elements.searchUntil.value, '');
+    assert.equal(elements.filterSummary.textContent, '高级筛选', 'clear resets the collapsed filter count');
+    assert.equal(elements.searchDraft.hidden, true, 'clear submits immediately, leaving no pending draft');
+    assert.equal(elements.codeSearchHelp.hidden, false, 'clear retains guidance for the selected search type');
     renderSearch({ kind: 'message', text: '', scope: 'all', since: '2024-03-01' }, [], false, 'other-repo');
+    assert.equal(elements.filterSummary.textContent, '高级筛选（1 项）', 'date-only queries remain visible in the collapsed summary');
     assert.match(elements.rows.children[0].textContent, /没有匹配的提交/, 'date-only no-results is not an empty repository');
     receive({ data: { type: 'loading' } });
     assert.equal(elements.rows.children.length, 0, 'loading hides inactive rows from the previous query');

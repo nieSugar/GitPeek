@@ -92,12 +92,12 @@ async function main() {
     const details = registerCommitFeatures(context, service);
     await details.showCommit(repo, root);
     const provider = views.get('gitpeek.commitDetails');
-    assert.ok(provider.getChildren().some(row => row.label === root));
+    assert.ok(provider.getChildren().some(row => row.commitTarget?.hash === root));
     const detailFile = provider.getChildren().find(row => row.contextValue === 'gitpeek.detailFile');
     await commands.get('gitpeek.internal.details.pin')(); await details.showCommit(other, root);
-    assert.ok(provider.getChildren().some(row => row.label === root), 'pin retains original repository and commit');
+    assert.ok(provider.getChildren().some(row => row.commitTarget?.hash === root), 'pin retains original repository and commit');
     await details.showCommit(repo, tip); await commands.get('gitpeek.internal.details.unpin')();
-    assert.ok(provider.getChildren().some(row => row.label === tip), 'unpin loads the last selected commit');
+    assert.ok(provider.getChildren().some(row => row.commitTarget?.hash === tip), 'unpin loads the last selected commit');
     await vscode.commands.executeCommand(detailFile.command.command, ...detailFile.command.arguments);
     assert.equal(executed.at(-1)[0], 'vscode.diff');
     let release; const barrier = new Promise(resolve => release = resolve);
@@ -105,7 +105,7 @@ async function main() {
     delayed.run = async (r, args, options) => { if (args[0] === 'rev-parse' && args.at(-1) === root + '^{commit}') await barrier; return originalRun(r, args, options); };
     const delayedDetails = registerCommitFeatures({ subscriptions: [] }, delayed);
     const slow = delayedDetails.showCommit(repo, root); await delayedDetails.showCommit(repo, tip); release(); await slow;
-    assert.ok(views.get('gitpeek.commitDetails').getChildren().some(row => row.label === tip), 'late detail request cannot replace latest');
+    assert.ok(views.get('gitpeek.commitDetails').getChildren().some(row => row.commitTarget?.hash === tip), 'late detail request cannot replace latest');
     registerRevisionCompare(context, service);
     const target = hash => ({ commitTarget: { repo, hash } });
     await commands.get('gitpeek.internal.compare.selectCompare')(target(root));

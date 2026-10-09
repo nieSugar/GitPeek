@@ -71,7 +71,7 @@ class CommitFeatures {
       vscode.workspace.registerTextDocumentContentProvider(CONTENT_SCHEME, this.content),
       vscode.window.createTreeView('gitpeek.commitDetails', { treeDataProvider: {
         onDidChangeTreeData: this.changed.event, getTreeItem: (item: vscode.TreeItem) => item,
-        getChildren: () => this.rows,
+        getChildren: (item?: vscode.TreeItem & { children?: vscode.TreeItem[] }) => item ? item.children ?? [] : this.rows,
       } }),
       vscode.commands.registerCommand('gitpeek.internal.details.openDiff', (repo: Repository, hash: string, file: string, workspacePath?: string) => this.showDiff(repo, hash, file, workspacePath)),
       vscode.commands.registerCommand('gitpeek.previousFileRevision', (uri?: vscode.Uri) => this.navigateRevision(1, uri)),
@@ -93,6 +93,7 @@ class CommitFeatures {
         this.generation++; this.diffGeneration++; this.current = undefined; this.pending = undefined; this.pinned = false;
         this.rows = [new vscode.TreeItem('GitPeek 已禁用。')]; this.changed.fire();
         void vscode.commands.executeCommand('setContext', 'gitpeek.detailsPinned', false);
+        void vscode.commands.executeCommand('setContext', 'gitpeek.hasCommitDetails', false);
       }),
     );
   }
@@ -101,6 +102,8 @@ class CommitFeatures {
     if (!vscode.workspace.getConfiguration('gitpeek').get('enabled', true)) return;
     this.pending = { repo, hash };
     if (this.pinned && this.current) {
+      await vscode.commands.executeCommand('setContext', 'gitpeek.hasCommitDetails', true);
+      if (!this.current) return;
       await vscode.window.showInformationMessage('GitPeek：提交详情已固定，取消固定后可查看所选提交。');
       await vscode.commands.executeCommand('gitpeek.commitDetails.focus');
       return;
@@ -108,6 +111,8 @@ class CommitFeatures {
     const request = ++this.generation;
     this.current = undefined;
     this.rows = [new vscode.TreeItem('正在加载提交详情…')]; this.changed.fire();
+    await vscode.commands.executeCommand('setContext', 'gitpeek.hasCommitDetails', true);
+    if (request !== this.generation) return;
     await vscode.commands.executeCommand('gitpeek.commitDetails.focus');
     try {
       const detail = await loadCommitDetail(this.git, repo, hash);
@@ -117,13 +122,17 @@ class CommitFeatures {
       this.current = { repo, detail };
       this.content.register(repo);
       const commitTarget = { repo, hash: detail.hash };
-      const heading = Object.assign(new vscode.TreeItem(detail.hash), { contextValue: 'gitpeek.detailCommit', commitTarget });
-      heading.tooltip = message;
+      const heading = Object.assign(new vscode.TreeItem(detail.subject || detail.shortHash), {
+        description: detail.shortHash, contextValue: 'gitpeek.detailCommit', commitTarget,
+        tooltip: `${repo.root}\n${detail.hash}\n\n${message}`,
+      });
       this.rows = [
-        new vscode.TreeItem(repo.root), heading,
-        new vscode.TreeItem(`${detail.author} · ${formatDate(detail.date)}`),
-        ...message.split(/\r?\n/).map(line => Object.assign(new vscode.TreeItem(line || ' '), { tooltip: message })),
-        new vscode.TreeItem(`${detail.files.length} 个文件 · +${detail.additions} −${detail.deletions}`),
+        heading,
+        Object.assign(new vscode.TreeItem(detail.author), {
+          description: `${formatDate(detail.date)} · ${basename(repo.root)}`,
+          tooltip: `${detail.author}\n${formatDate(detail.date)}\n${repo.root}`,
+        }),
+        Object.assign(new vscode.TreeItem(`变更文件 · ${detail.files.length} 个`), { description: `+${detail.additions} −${detail.deletions}` }),
         ...detail.files.map((file) => {
           const workspacePath = workspacePaths.get(file.path);
           return {
@@ -134,6 +143,10 @@ class CommitFeatures {
             command: { command: 'gitpeek.internal.details.openDiff', title: '打开差异', arguments: [repo, detail.hash, file.path, workspacePath] },
           };
         }),
+        ...(message.includes('\n') ? [Object.assign(new vscode.TreeItem('完整提交说明', vscode.TreeItemCollapsibleState.Collapsed), {
+          tooltip: message,
+          children: message.split(/\r?\n/).map(line => Object.assign(new vscode.TreeItem(line || ' '), { tooltip: message })),
+        })] : []),
       ];
       this.changed.fire();
     } catch (error) {

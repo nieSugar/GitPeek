@@ -27,7 +27,7 @@
     "watch": "node esbuild.js --watch",
     "check": "tsc --noEmit",
     "benchmark": "node scripts/benchmark.cjs",
-    "test": "node --test tests/git-service.integration.cjs tests/blame.test.cjs tests/virtualEditor.test.cjs tests/fileHistory.test.mjs tests/commitGraph.integration.cjs tests/commitGraphView.test.cjs tests/checkoutCommit.integration.cjs tests/cherryPickCommit.integration.cjs tests/stashList.integration.cjs tests/stashSave.integration.cjs tests/stashApply.integration.cjs tests/stashDrop.integration.cjs tests/commit-detail.integration.cjs tests/branchCompare.integration.cjs tests/selectionOrigins.integration.cjs tests/reviewChanges.integration.cjs tests/smartCommit.test.mjs tests/contextMenus.test.cjs tests/workflows.integration.cjs tests/detailsCompare.regressions.cjs tests/historyStage.regressions.cjs tests/search-regressions.test.cjs tests/batchStage.integration.cjs tests/batchStageView.test.cjs tests/fileBlame.test.cjs tests/revisionNavigation.test.cjs tests/selectionSnapshot.integration.cjs tests/interactiveRebase.integration.cjs tests/rebaseEditor.test.cjs",
+    "test": "node --test tests/git-service.integration.cjs tests/blame.test.cjs tests/virtualEditor.test.cjs tests/fileHistory.test.mjs tests/commitGraph.integration.cjs tests/commitGraphView.test.cjs tests/checkoutCommit.integration.cjs tests/cherryPickCommit.integration.cjs tests/stashList.integration.cjs tests/stashSave.integration.cjs tests/stashApply.integration.cjs tests/stashDrop.integration.cjs tests/commit-detail.integration.cjs tests/branchCompare.integration.cjs tests/selectionOrigins.integration.cjs tests/reviewChanges.integration.cjs tests/smartCommit.test.mjs tests/contextMenus.test.cjs tests/workflows.integration.cjs tests/detailsCompare.regressions.cjs tests/historyStage.regressions.cjs tests/search-regressions.test.cjs tests/batchStage.integration.cjs tests/batchStageView.test.cjs tests/fileBlame.test.cjs tests/revisionNavigation.test.cjs tests/selectionSnapshot.integration.cjs tests/interactiveRebase.integration.cjs tests/rebaseEditor.test.cjs tests/comparisonLayout.test.cjs",
     "package": "npm run check && npm run compile && vsce package --no-dependencies"
   },
   "devDependencies": {
@@ -282,24 +282,28 @@
           "name": "仓库"
         },
         {
-          "id": "gitpeek.changes",
-          "name": "更改"
-        },
-        {
-          "id": "gitpeek.branchChanges",
-          "name": "分支变更"
-        },
-        {
           "id": "gitpeek.fileHistory",
           "name": "文件历史"
         },
         {
           "id": "gitpeek.commitDetails",
-          "name": "提交详情"
+          "name": "提交详情",
+          "when": "config.gitpeek.enabled && gitpeek.hasCommitDetails"
         },
         {
           "id": "gitpeek.comparison",
-          "name": "提交比较"
+          "name": "提交比较",
+          "when": "config.gitpeek.enabled && gitpeek.hasComparison"
+        },
+        {
+          "id": "gitpeek.branchChanges",
+          "name": "分支变更",
+          "visibility": "collapsed"
+        },
+        {
+          "id": "gitpeek.changes",
+          "name": "更改",
+          "visibility": "collapsed"
         }
       ]
     },

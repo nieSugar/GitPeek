@@ -42,8 +42,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     sidebar.setBranchChangesItems(branch.items);
     const summary = branch.summary;
     sidebar.setRepositoryItems(summary ? [
-      new vscode.TreeItem(path.basename(summary.repo.root)),
-      new vscode.TreeItem(summary.branch),
+      Object.assign(new vscode.TreeItem(path.basename(summary.repo.root)), {
+        description: summary.branch,
+        tooltip: `${summary.repo.root}\n当前分支：${summary.branch}`,
+        iconPath: new vscode.ThemeIcon('repo'),
+      }),
       new vscode.TreeItem(`对比 ${summary.base} · ↑${summary.ahead} ↓${summary.behind}`),
     ] : []);
   };
