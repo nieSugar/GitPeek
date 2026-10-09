@@ -4,6 +4,7 @@
   "description": "面向代码上下文的轻量级 VS Code Git 扩展。",
   "version": "0.7.0",
   "publisher": "gitpeek",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/nieSugar/GitPeek.git"
@@ -687,6 +688,8 @@
     "dist/**",
     "resources/**",
     "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
     "package.json"
   ]
 }

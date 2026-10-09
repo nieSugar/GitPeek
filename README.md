@@ -122,3 +122,7 @@ GitPeek 0.7.0 在 0.6.0 基础上增加历史筛选、整文件归属、版本�
 ## 改进方案与性能复测
 
 第一轮任务与验收见 [代码调查体验改进方案](docs/GitPeek-Improvement-Plan.md)，本轮整文件归属、版本导航及编辑中追溯见 [深入代码调查改进方案](docs/GitPeek-Investigation-Phase-2.md)。运行 `npm run benchmark -- . README.md HEAD~1 10` 可记录当前环境下的数据查询延迟与 Git 调用量；这不是 VS Code 界面耗时或 GitLens 性能对照。
+
+## 许可证与更新记录
+
+GitPeek 使用 [MIT 许可证](LICENSE)，版权署名为 nieSugar。各版本变更见 [更新记录](CHANGELOG.md)。
