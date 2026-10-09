@@ -129,7 +129,8 @@ async function main() {
     write(guarded, 'tracked.txt', 'work\n'); write(guarded, 'first.txt', 'first\n'); write(guarded, 'second.txt', 'second\n');
     await feature.refresh(guarded);
     const dirtyFirst = node('untracked', 'first.txt'), dirtySecond = node('untracked', 'second.txt');
-    vscode.workspace.textDocuments = [{ uri: vscode.Uri.file(path.join(guarded.root, 'second.txt').toLowerCase()), isDirty: true }];
+    const dirtySecondPath = path.join(guarded.root, 'second.txt');
+    vscode.workspace.textDocuments = [{ uri: vscode.Uri.file(process.platform === 'win32' ? dirtySecondPath.toLowerCase() : dirtySecondPath), isDirty: true }];
     await assertRejected(guarded, 'stage', dirtyFirst, [dirtyFirst, dirtySecond]);
     await assertRejected(guarded, 'stageGroup', group('untracked'));
     vscode.workspace.textDocuments = [];

@@ -1,7 +1,7 @@
 // Run with installed dev dependencies: node tests/branchCompare.integration.cjs
 const assert = require('node:assert/strict')
 const { execFileSync } = require('node:child_process')
-const { mkdtempSync, writeFileSync, rmSync } = require('node:fs')
+const { mkdtempSync, writeFileSync, realpathSync, rmSync } = require('node:fs')
 const { tmpdir } = require('node:os')
 const { join, resolve } = require('node:path')
 const Module = require('node:module')
@@ -136,8 +136,8 @@ async function main() {
 
     const feature = registerBranchCompare({ subscriptions }, gitService, { pickRepository: async () => repo }, async () => {})
     await feature.show(repo)
-    const refsPath = resolve(repoRoot, git(repoRoot, 'rev-parse', '--git-path', 'refs'))
-    const refsWatcher = watchers.find(watcher => watcher.pattern.baseUri.fsPath === refsPath)
+    const refsPath = realpathSync.native(resolve(repoRoot, git(repoRoot, 'rev-parse', '--git-path', 'refs')))
+    const refsWatcher = watchers.find(watcher => realpathSync.native(watcher.pattern.baseUri.fsPath) === refsPath)
     assert.ok(refsWatcher, 'watch the Git refs directory on the native platform, including Windows')
     assert.equal(refsWatcher.pattern.pattern, '**/*', 'local, remote and nested refs are recursive')
     assert.equal(feature.summary.behind, 1)
@@ -155,7 +155,7 @@ async function main() {
     git(repoRoot, 'worktree', 'add', '--detach', worktreeRoot, head)
     await feature.show({ root: worktreeRoot, id: 'linked-worktree' })
     assert.ok(refsWatcher.disposed, 'changing repository clears old watchers')
-    assert.ok(watchers.some(watcher => !watcher.disposed && watcher.pattern.baseUri.fsPath === refsPath && watcher.pattern.pattern === '**/*'),
+    assert.ok(watchers.some(watcher => !watcher.disposed && realpathSync.native(watcher.pattern.baseUri.fsPath) === refsPath && watcher.pattern.pattern === '**/*'),
       'linked worktrees watch their shared refs directory')
     for (const subscription of subscriptions) subscription.dispose()
 
