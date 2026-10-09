@@ -1,24 +1,28 @@
 import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import { BlameInfo, BranchComparison, CommitDetail, FileHistoryCommit, FileChange, GitStatus, Repository } from './types'
 import { parseBlame, parseFileHistory, parseLog, parseNameStatus, parseNumStat, parseStatus } from './GitParser'
 
-const execFileAsync = promisify(execFile)
 const DEFAULT_TIMEOUT_MS = 5000
 const MAX_BUFFER = 16 * 1024 * 1024
 
 export class GitService {
   constructor(private readonly log?: (message: string) => void) {}
 
-  async run(repo: Repository | string, args: string[], options: { timeoutMs?: number } = {}): Promise<string> {
+  async run(repo: Repository | string, args: string[], options: { timeoutMs?: number; input?: string; env?: NodeJS.ProcessEnv } = {}): Promise<string> {
     const root = typeof repo === 'string' ? repo : repo.root
     const startedAt = Date.now()
     try {
-      const { stdout } = await execFileAsync('git', ['-C', root, ...args], {
-        encoding: 'utf8', timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS, maxBuffer: MAX_BUFFER,
-        windowsHide: true,
+      return await new Promise<string>((resolve, reject) => {
+        const child = execFile('git', ['-C', root, ...args], {
+          encoding: 'utf8', timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS, maxBuffer: MAX_BUFFER,
+          windowsHide: true, env: options.env ? { ...process.env, ...options.env } : process.env,
+        }, (error, stdout, stderr) => error ? reject(Object.assign(error, { stdout, stderr })) : resolve(stdout))
+        child.stdin?.on('error', error => {
+          // Git may reject an argument before consuming stdin; preserve its diagnostic in the callback.
+          if ((error as NodeJS.ErrnoException).code !== 'EPIPE') { child.kill(); reject(error) }
+        })
+        child.stdin?.end(options.input ?? '', 'utf8')
       })
-      return stdout
     } catch (cause) {
       const error = cause as NodeJS.ErrnoException & { stderr?: string; killed?: boolean; signal?: string }
       const detail = error.killed ? 'timed out' : error.code === 'ENOENT' ? 'git executable not found' : (error.stderr?.trim() || error.message)
@@ -35,6 +39,14 @@ export class GitService {
   async blame(repo: Repository, file: string, startLine: number, endLine = startLine): Promise<BlameInfo[]> {
     if (!Number.isInteger(startLine) || !Number.isInteger(endLine) || startLine < 1 || endLine < startLine) throw new RangeError('Invalid blame line range')
     return parseBlame(await this.run(repo, ['-c', 'core.quotePath=false', 'blame', '--line-porcelain', '-L', `${startLine},${endLine}`, '--', file]))
+  }
+
+  async blameContents(repo: Repository, file: string, contents: string): Promise<BlameInfo[]> {
+    if (!contents) return []
+    // VS Code exposes text without its UTF-8 BOM; retain the index encoding marker for attribution.
+    const indexed = await this.run(repo, ['show', `:${file}`])
+    if (indexed.startsWith('\uFEFF') && !contents.startsWith('\uFEFF')) contents = '\uFEFF' + contents
+    return parseBlame(await this.run(repo, ['-c', 'core.quotePath=false', 'blame', '--line-porcelain', '--contents', '-', '--', file], { input: contents, timeoutMs: 10_000 }))
   }
 
   async history(repo: Repository, file: string, limit = 20): Promise<FileHistoryCommit[]> {

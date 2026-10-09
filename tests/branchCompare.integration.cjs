@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const { execFileSync } = require('node:child_process')
 const { mkdtempSync, writeFileSync, rmSync } = require('node:fs')
 const { tmpdir } = require('node:os')
-const { join } = require('node:path')
+const { join, resolve } = require('node:path')
 const Module = require('node:module')
 const esbuild = require('esbuild')
 
@@ -42,12 +42,52 @@ async function main() {
     await esbuild.build({ entryPoints: [join(__dirname, '..', 'src', 'features', 'branchCompare.ts')], bundle: true, platform: 'node', format: 'cjs', external: ['vscode'], outfile: bundle })
     const gitBundle = join(root, 'git-service.cjs')
     await esbuild.build({ entryPoints: [join(__dirname, '..', 'src', 'git', 'GitService.ts')], bundle: true, platform: 'node', format: 'cjs', outfile: gitBundle })
+    const watchers = []
+    const subscriptions = []
+    const disposable = { dispose() {} }
+    const vscode = {
+      EventEmitter: class {
+        listeners = new Set()
+        event = listener => { this.listeners.add(listener); return { dispose: () => this.listeners.delete(listener) } }
+        fire() { for (const listener of this.listeners) listener() }
+        dispose() { this.listeners.clear() }
+      },
+      TreeItem: class { constructor(label) { this.label = label } },
+      RelativePattern: class { constructor(base, pattern) { this.baseUri = base; this.pattern = pattern } },
+      TabInputText: class {}, TabInputTextDiff: class {}, TabInputWebview: class {},
+      StatusBarAlignment: { Left: 1 }, QuickPickItemKind: { Separator: -1 },
+      Uri: { file: fsPath => ({ scheme: 'file', fsPath }) },
+      window: {
+        tabGroups: { activeTabGroup: {} },
+        createStatusBarItem: () => ({ ...disposable, hide() {}, show() {} }),
+        onDidChangeActiveTextEditor: () => disposable,
+        showQuickPick: async () => undefined,
+        showErrorMessage: async message => { assert.fail(message) },
+      },
+      workspace: {
+        getConfiguration: () => ({ get: (key, fallback) => key === 'baseBranch' ? 'origin/main' : fallback }),
+        registerTextDocumentContentProvider: () => disposable,
+        onDidChangeConfiguration: () => disposable,
+        createFileSystemWatcher: pattern => {
+          const watcher = {
+            pattern, disposed: false,
+            dispose() { this.disposed = true },
+            onDidChange(callback) { this.change = callback },
+            onDidCreate(callback) { this.create = callback },
+            onDidDelete(callback) { this.delete = callback },
+          }
+          watchers.push(watcher)
+          return watcher
+        },
+      },
+      commands: { registerCommand: () => disposable },
+    }
     const originalLoad = Module._load
     Module._load = function (request, parent, isMain) {
-      if (request === 'vscode') return {}
+      if (request === 'vscode') return vscode
       return originalLoad.call(this, request, parent, isMain)
     }
-    const { resolveBaseBranch, loadBranchCompare } = require(bundle)
+    const { resolveBaseBranch, loadBranchCompare, registerBranchCompare } = require(bundle)
     Module._load = originalLoad
     const { GitService } = require(gitBundle)
     const gitService = new GitService()
@@ -65,12 +105,66 @@ async function main() {
     assert.match(git(repoRoot, 'diff', '--name-only', 'main', 'HEAD'), /base-only\.txt/)
     await assert.rejects(resolveBaseBranch(gitService, repo, 'missing-base'), /不存在/)
 
+    const head = git(repoRoot, 'rev-parse', 'HEAD')
+    git(repoRoot, 'branch', 'same-head', head)
+    const moveBase = () => git(repoRoot, 'update-ref', 'refs/heads/main', head)
+    const restoreBase = () => git(repoRoot, 'update-ref', 'refs/heads/main', baseTip)
+    const racingService = Object.create(gitService)
+    racingService.compare = async (repository, baseHash, headHash) => {
+      assert.equal(baseHash, baseTip, 'comparison pins the base hash before any diff query')
+      assert.equal(headHash, head)
+      moveBase()
+      try { return await gitService.compare(repository, baseHash, headHash) }
+      finally { restoreBase() }
+    }
+    assert.deepEqual(await loadBranchCompare(racingService, repo, 'main'), comparison,
+      'a base ref that changes between Git calls cannot mix merge-base, file names and counts')
+
+    for (const [label, change, restore] of [
+      ['base', moveBase, restoreBase],
+      ['HEAD', () => git(repoRoot, 'update-ref', 'refs/heads/feature', common), () => git(repoRoot, 'update-ref', 'refs/heads/feature', head)],
+      ['branch with the same HEAD', () => git(repoRoot, 'symbolic-ref', 'HEAD', 'refs/heads/same-head'), () => git(repoRoot, 'symbolic-ref', 'HEAD', 'refs/heads/feature')],
+    ]) {
+      racingService.compare = async (...args) => {
+        const result = await gitService.compare(...args)
+        change()
+        return result
+      }
+      try { await assert.rejects(loadBranchCompare(racingService, repo, 'main'), /分支或基准已变化/, label) }
+      finally { restore() }
+    }
+
+    const feature = registerBranchCompare({ subscriptions }, gitService, { pickRepository: async () => repo }, async () => {})
+    await feature.show(repo)
+    const refsPath = resolve(repoRoot, git(repoRoot, 'rev-parse', '--git-path', 'refs'))
+    const refsWatcher = watchers.find(watcher => watcher.pattern.baseUri.fsPath === refsPath)
+    assert.ok(refsWatcher, 'watch the Git refs directory on the native platform, including Windows')
+    assert.equal(refsWatcher.pattern.pattern, '**/*', 'local, remote and nested refs are recursive')
+    assert.equal(feature.summary.behind, 1)
+    const refreshed = new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Remote ref watcher did not refresh the comparison')), 5000)
+      const listener = feature.onDidChange(() => { clearTimeout(timeout); listener.dispose(); resolve() })
+    })
+    git(repoRoot, 'update-ref', 'refs/remotes/origin/main', common)
+    refsWatcher.change()
+    await refreshed
+    assert.equal(feature.summary.behind, 0, 'remote base updates refresh the comparison')
+    git(repoRoot, 'update-ref', 'refs/remotes/origin/main', baseTip)
+
+    const worktreeRoot = join(root, 'linked-worktree')
+    git(repoRoot, 'worktree', 'add', '--detach', worktreeRoot, head)
+    await feature.show({ root: worktreeRoot, id: 'linked-worktree' })
+    assert.ok(refsWatcher.disposed, 'changing repository clears old watchers')
+    assert.ok(watchers.some(watcher => !watcher.disposed && watcher.pattern.baseUri.fsPath === refsPath && watcher.pattern.pattern === '**/*'),
+      'linked worktrees watch their shared refs directory')
+    for (const subscription of subscriptions) subscription.dispose()
+
     git(repoRoot, 'checkout', '--orphan', 'unrelated')
     writeFileSync(join(repoRoot, 'unrelated.txt'), 'no shared history\n', 'utf8')
     git(repoRoot, 'add', '-A')
     git(repoRoot, 'commit', '-m', 'unrelated root')
     await assert.rejects(loadBranchCompare(gitService, repo, 'main'), /没有共同祖先/)
-    console.log('Branch compare integration check passed (diverged tips, merge-base file set, auto/manual base, unrelated history).')
+    console.log('Branch compare integration check passed (immutable snapshots, ref races, recursive remote/worktree watchers, diverged tips, unrelated history).')
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

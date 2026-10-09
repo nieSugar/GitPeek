@@ -2,8 +2,12 @@
 const path = require('node:path');
 
 const PUBLIC_COMMANDS = [
+  'gitpeek.toggleFileBlame', 'gitpeek.previousFileRevision', 'gitpeek.nextFileRevision',
   'gitpeek.fileHistory',
   'gitpeek.showCommitGraph',
+  'gitpeek.interactiveRebase',
+  'gitpeek.continueRebase',
+  'gitpeek.abortRebase',
   'gitpeek.stash',
   'gitpeek.blameCurrentLine',
   'gitpeek.selectionOrigins',

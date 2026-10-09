@@ -21,6 +21,8 @@ export class BlameController implements vscode.Disposable {
   private readonly cache = new Map<string, { expires: number; value: BlameInfo }>();
   private pending?: ReturnType<typeof setTimeout>;
   private generation = 0;
+  private suspended = false;
+  private disposed = false;
   private shown?: { uri: string; line: number; hover: vscode.MarkdownString };
 
   constructor(
@@ -67,13 +69,20 @@ export class BlameController implements vscode.Disposable {
     this.schedule(true);
   }
 
+  setSuspended(suspended: boolean): void {
+    this.suspended = suspended;
+    this.schedule(true);
+  }
+
   dispose(): void {
+    this.disposed = true;
     this.generation++;
     if (this.pending) clearTimeout(this.pending);
     vscode.Disposable.from(...this.subscriptions).dispose();
   }
 
   private schedule(immediate = false): void {
+    if (this.disposed) return;
     const current = ++this.generation;
     if (this.pending) clearTimeout(this.pending);
     this.pending = undefined;
@@ -81,6 +90,7 @@ export class BlameController implements vscode.Disposable {
     const editor = vscode.window.activeTextEditor;
     if (!editor) return;
     editor.setDecorations(this.decoration, []);
+    if (this.suspended) return;
 
     const config = vscode.workspace.getConfiguration('gitpeek', editor.document.uri);
     if (!config.get<boolean>('enabled', true) || !config.get<boolean>('blame.enabled', true)) return;
@@ -189,6 +199,6 @@ function relativeTime(seconds: number): string {
   return new Intl.RelativeTimeFormat('zh-CN', { numeric: 'auto' }).format(-value, unit as Intl.RelativeTimeFormatUnit);
 }
 
-function escapeMarkdown(value: string): string {
+export function escapeMarkdown(value: string): string {
   return value.replace(/[\\`*_{}\[\]()#+.!|>~-]/g, '\\$&');
 }

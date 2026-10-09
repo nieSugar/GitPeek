@@ -25,7 +25,8 @@
     "build": "npm run compile",
     "watch": "node esbuild.js --watch",
     "check": "tsc --noEmit",
-    "test": "node --test tests/git-service.integration.cjs tests/blame.test.cjs tests/virtualEditor.test.cjs tests/fileHistory.test.mjs tests/commitGraph.integration.cjs tests/commitGraphView.test.cjs tests/checkoutCommit.integration.cjs tests/cherryPickCommit.integration.cjs tests/stashList.integration.cjs tests/stashSave.integration.cjs tests/stashApply.integration.cjs tests/stashDrop.integration.cjs tests/commit-detail.integration.cjs tests/branchCompare.integration.cjs tests/selectionOrigins.integration.cjs tests/reviewChanges.integration.cjs tests/smartCommit.test.mjs tests/contextMenus.test.cjs tests/workflows.integration.cjs tests/detailsCompare.regressions.cjs tests/historyStage.regressions.cjs tests/search-regressions.test.cjs tests/batchStage.integration.cjs tests/batchStageView.test.cjs",
+    "benchmark": "node scripts/benchmark.cjs",
+    "test": "node --test tests/git-service.integration.cjs tests/blame.test.cjs tests/virtualEditor.test.cjs tests/fileHistory.test.mjs tests/commitGraph.integration.cjs tests/commitGraphView.test.cjs tests/checkoutCommit.integration.cjs tests/cherryPickCommit.integration.cjs tests/stashList.integration.cjs tests/stashSave.integration.cjs tests/stashApply.integration.cjs tests/stashDrop.integration.cjs tests/commit-detail.integration.cjs tests/branchCompare.integration.cjs tests/selectionOrigins.integration.cjs tests/reviewChanges.integration.cjs tests/smartCommit.test.mjs tests/contextMenus.test.cjs tests/workflows.integration.cjs tests/detailsCompare.regressions.cjs tests/historyStage.regressions.cjs tests/search-regressions.test.cjs tests/batchStage.integration.cjs tests/batchStageView.test.cjs tests/fileBlame.test.cjs tests/revisionNavigation.test.cjs tests/selectionSnapshot.integration.cjs tests/interactiveRebase.integration.cjs tests/rebaseEditor.test.cjs",
     "package": "npm run check && npm run compile && vsce package --no-dependencies"
   },
   "devDependencies": {
@@ -45,6 +46,21 @@
         "command": "gitpeek.showCommitGraph",
         "title": "GitPeek: 提交图",
         "icon": "$(git-branch)"
+      },
+      {
+        "command": "gitpeek.interactiveRebase",
+        "title": "GitPeek: 整理提交（交互式 Rebase）",
+        "enablement": "config.gitpeek.enabled"
+      },
+      {
+        "command": "gitpeek.continueRebase",
+        "title": "GitPeek: 继续 Rebase",
+        "enablement": "config.gitpeek.enabled"
+      },
+      {
+        "command": "gitpeek.abortRebase",
+        "title": "GitPeek: 中止 Rebase",
+        "enablement": "config.gitpeek.enabled"
       },
       {
         "command": "gitpeek.stash",
@@ -118,6 +134,12 @@
       {
         "command": "gitpeek.internal.graph.checkout",
         "title": "检出此提交…",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled"
+      },
+      {
+        "command": "gitpeek.internal.graph.rebase",
+        "title": "从此提交开始整理…",
         "category": "GitPeek",
         "enablement": "config.gitpeek.enabled"
       },
@@ -223,6 +245,24 @@
         "category": "GitPeek",
         "enablement": "config.gitpeek.enabled",
         "icon": "$(remove)"
+      },
+      {
+        "command": "gitpeek.toggleFileBlame",
+        "title": "GitPeek: 切换整文件归属",
+        "icon": "$(account)",
+        "enablement": "config.gitpeek.enabled"
+      },
+      {
+        "command": "gitpeek.previousFileRevision",
+        "title": "GitPeek: 上一处文件修改",
+        "icon": "$(arrow-left)",
+        "enablement": "config.gitpeek.enabled"
+      },
+      {
+        "command": "gitpeek.nextFileRevision",
+        "title": "GitPeek: 下一处文件修改",
+        "icon": "$(arrow-right)",
+        "enablement": "config.gitpeek.enabled"
       }
     ],
     "viewsContainers": {
@@ -300,6 +340,16 @@
           "command": "gitpeek.compareWithBase",
           "when": "resourceScheme == file",
           "group": "navigation@2"
+        },
+        {
+          "command": "gitpeek.previousFileRevision",
+          "when": "config.gitpeek.enabled && resourceScheme == gitpeek-commit",
+          "group": "navigation@1"
+        },
+        {
+          "command": "gitpeek.nextFileRevision",
+          "when": "config.gitpeek.enabled && resourceScheme == gitpeek-commit",
+          "group": "navigation@2"
         }
       ],
       "editor/context": [
@@ -322,9 +372,30 @@
           "command": "gitpeek.selectionHistory",
           "when": "config.gitpeek.enabled && editorHasSelection && resourceScheme == file",
           "group": "gitpeek@4"
+        },
+        {
+          "command": "gitpeek.toggleFileBlame",
+          "when": "config.gitpeek.enabled && resourceScheme == file",
+          "group": "gitpeek@5"
         }
       ],
       "commandPalette": [
+        {
+          "command": "gitpeek.interactiveRebase",
+          "when": "config.gitpeek.enabled"
+        },
+        {
+          "command": "gitpeek.continueRebase",
+          "when": "config.gitpeek.enabled"
+        },
+        {
+          "command": "gitpeek.abortRebase",
+          "when": "config.gitpeek.enabled"
+        },
+        {
+          "command": "gitpeek.internal.graph.rebase",
+          "when": "false"
+        },
         {
           "command": "gitpeek.internal.tree.openDiff",
           "when": "false"
@@ -412,6 +483,14 @@
         {
           "command": "gitpeek.internal.reviewChanges.unstageGroup",
           "when": "false"
+        },
+        {
+          "command": "gitpeek.previousFileRevision",
+          "when": "config.gitpeek.enabled && resourceScheme == gitpeek-commit"
+        },
+        {
+          "command": "gitpeek.nextFileRevision",
+          "when": "config.gitpeek.enabled && resourceScheme == gitpeek-commit"
         }
       ],
       "view/item/context": [
@@ -521,6 +600,11 @@
           "command": "gitpeek.internal.graph.cherryPick",
           "when": "config.gitpeek.enabled && webviewId == gitpeek.commitGraph && webviewSection == commit",
           "group": "2_modify@4"
+        },
+        {
+          "command": "gitpeek.internal.graph.rebase",
+          "when": "config.gitpeek.enabled && webviewId == gitpeek.commitGraph && webviewSection == commit",
+          "group": "2_modify@5"
         },
         {
           "command": "gitpeek.internal.graph.selectCompare",

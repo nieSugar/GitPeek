@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
 const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } = require('node:fs');
 const { tmpdir } = require('node:os');
-const { join } = require('node:path');
+const { basename, join, sep } = require('node:path');
 const Module = require('node:module');
 const esbuild = require('esbuild');
 
@@ -88,6 +88,7 @@ async function main() {
 }
 
 async function checkHistoryClicks(temp, gitService, repo) {
+  const otherRepo = { id: 'other-repository', root: join(temp, 'other-repository') };
   writeFileSync(join(repo.root, 'renamed name.txt'), 'after\n', 'utf8');
   writeFileSync(join(repo.root, 'added.txt'), 'unrelated change\n', 'utf8');
   git(repo.root, 'add', '--all');
@@ -101,6 +102,10 @@ async function checkHistoryClicks(temp, gitService, repo) {
   const disposable = { dispose() {} };
   const uri = (fields) => ({ ...fields, toString() { return JSON.stringify(fields); } });
   let contentProvider, changeEditor;
+  const activate = async documentUri => {
+    vscode.window.activeTextEditor = { document: { uri: documentUri } };
+    await changeEditor(vscode.window.activeTextEditor);
+  };
   const vscode = {
     EventEmitter: class { event = () => disposable; fire() {} dispose() {} },
     TreeItem: class { constructor(label) { this.label = label; } },
@@ -112,6 +117,7 @@ async function checkHistoryClicks(temp, gitService, repo) {
       onDidChangeActiveTextEditor: (handler) => (changeEditor = handler, disposable),
       onDidChangeWindowState: () => disposable,
       showQuickPick: async () => assert.fail('file history must open the diff without a file picker'),
+      showInformationMessage: async (message) => assert.fail(message),
       showErrorMessage: async (message) => assert.fail(message),
     },
     workspace: {
@@ -125,9 +131,10 @@ async function checkHistoryClicks(temp, gitService, repo) {
     commands: {
       registerCommand: (name, callback) => (commands.set(name, callback), disposable),
       executeCommand: async (name, ...args) => {
+        if (name === 'gitpeek.fileHistory.focus') return;
         assert.equal(name, 'vscode.diff');
         diffs.push(args);
-        changeEditor({ document: { uri: args[1] } });
+        await activate(args[1]);
       },
     },
   };
@@ -142,22 +149,64 @@ async function checkHistoryClicks(temp, gitService, repo) {
     const { registerHistory } = require(join(outdir, 'history.cjs'));
     const { registerCommitFeatures } = require(join(outdir, 'commitDetail.cjs'));
     const commits = registerCommitFeatures(context, gitService);
-    const history = await registerHistory(context, gitService, { forUri: async () => repo }, commits.showDiff);
-    const rows = (await history.provider.getChildren()).filter((row) => row.command);
+    const history = await registerHistory(context, gitService, {
+      forUri: async uri => uri.fsPath.startsWith(otherRepo.root + sep) ? otherRepo : repo,
+    }, commits.showDiff);
+    const allRows = await history.provider.getChildren();
+    assert.equal(allRows[0].label, currentFile);
+    assert.equal(allRows[0].description, basename(repo.root));
+    assert.ok(allRows[0].tooltip.includes(repo.root));
+    const rows = allRows.filter((row) => row.command);
     assert.equal(rows.length, 4);
     assert.deepEqual(rows.map((row) => row.command.arguments[2]), [currentFile, 'renamed name.txt', 'renamed name.txt', 'before name.txt']);
+    assert.ok(rows.at(-1).tooltip.includes('历史文件：before name.txt'));
+    assert.ok(rows.at(-1).tooltip.includes(`当前文件：${currentFile}`));
     const expected = [['after\n', 'after\n'], ['before\n', 'after\n'], ['before\n', 'before\n'], ['', 'before\n']];
     for (const [index, row] of rows.entries()) {
       const { command, arguments: args } = row.command;
       await commands.get(command)(...args);
       assert.equal(diffs.length, index + 1);
-      const [before, after] = diffs.at(-1);
+      const [before, after, title] = diffs.at(-1);
       assert.equal(await contentProvider.provideTextDocumentContent(before), expected[index][0]);
       assert.equal(await contentProvider.provideTextDocumentContent(after), expected[index][1]);
       assert.equal(JSON.parse(after.query).file, args[2]);
+      assert.equal(JSON.parse(after.query).workspacePath, currentFile);
+      const parent = JSON.parse(before.query).ref;
+      const hash = JSON.parse(after.query).ref;
+      assert.ok(title.startsWith(basename(repo.root) + ' · '));
+      assert.ok(title.includes(`${parent ? parent.slice(0, 7) : '空文件'} → ${hash.slice(0, 7)}`), 'diff title names both immutable versions');
     }
     assert.equal((await history.provider.getChildren()).length, rows.length + 1, 'diff editors preserve the current file history');
-    console.log('File history clicks passed (multi-file commit, modification, two renames, root commit, preserved context, no picker).');
+    await commands.get('gitpeek.fileHistory')();
+    assert.equal((await history.provider.getChildren())[0].label, currentFile, 'file history command from a diff retains its workspace file');
+    mkdirSync(otherRepo.root);
+    git(otherRepo.root, 'init', '-b', 'main'); git(otherRepo.root, 'config', 'user.name', 'GitPeek Test'); git(otherRepo.root, 'config', 'user.email', 'test@example.invalid');
+    writeFileSync(join(otherRepo.root, currentFile), 'other repository\n', 'utf8');
+    git(otherRepo.root, 'add', '--all'); git(otherRepo.root, 'commit', '-m', 'other root');
+    const oldDiff = diffs.at(-1)[1];
+    await activate(vscode.Uri.file(join(otherRepo.root, currentFile)));
+    const otherRows = await history.provider.getChildren();
+    assert.equal(otherRows[0].description, basename(otherRepo.root));
+    await commands.get(otherRows[1].command.command)(...otherRows[1].command.arguments);
+    const otherDiff = diffs.pop()[1];
+    await activate(oldDiff);
+    assert.equal((await history.provider.getChildren())[0].description, basename(repo.root), 'old diff restores its repository even when another repository has the same filename');
+    await activate(otherDiff);
+    assert.equal((await history.provider.getChildren())[0].description, basename(otherRepo.root));
+    await commands.get('gitpeek.fileHistory')();
+    assert.equal((await history.provider.getChildren())[0].description, basename(otherRepo.root), 'file history command in a diff keeps the correct repository');
+    for (let index = 0; index < 15; index++) {
+      await activate(vscode.Uri.file(join(repo.root, 'added.txt')));
+      assert.equal((await history.provider.getChildren())[0].label, 'added.txt');
+      await activate(diffs[index % diffs.length][index % 2]);
+      assert.equal((await history.provider.getChildren())[0].label, currentFile, 'switching among old diff tabs restores the original file through renames');
+    }
+    for (const replacement of [{ workspacePath: '../escape.txt' }, { workspacePath: repo.root }, { repoId: 'wrong-repo' }, { root: otherRepo.root }, { workspacePath: undefined }]) {
+      await activate(vscode.Uri.file(join(repo.root, 'added.txt')));
+      await activate(uri({ ...oldDiff, query: JSON.stringify({ ...JSON.parse(oldDiff.query), ...replacement }) }));
+      assert.equal((await history.provider.getChildren())[0].label, 'added.txt', 'invalid diff source metadata cannot replace the current file');
+    }
+    console.log('File history clicks passed (multi-file commit, two renames, root, 15 tab revisits, version titles, virtual command, source validation, no picker).');
   } finally {
     Module._load = originalLoad;
     for (const subscription of context.subscriptions) subscription.dispose();

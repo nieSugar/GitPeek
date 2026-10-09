@@ -38,7 +38,7 @@ async function main() {
       addEventListener(type, listener) { this[type] = listener; }
       scrollIntoView(options) { this.scrollOptions = options; }
     }
-    const elements = Object.fromEntries(['rows', 'status', 'more', 'branch', 'cherryContinue', 'cherryAbort', 'search', 'searchKind', 'searchText', 'searchScope'].map(id => [id, new Element('div')]));
+    const elements = Object.fromEntries(['rows', 'status', 'more', 'branch', 'cherryContinue', 'cherryAbort', 'search', 'searchKind', 'searchText', 'searchScope', 'searchPath', 'searchSince', 'searchUntil'].map(id => [id, new Element('div')]));
     elements.rows.parentElement = new Element('main');
     const messages = [];
     let receive, click;
@@ -152,12 +152,29 @@ async function main() {
     renderSearch({ kind: 'message', text: '', scope: 'all' }, [root], false, 'other-repo');
     assert.equal(elements.searchText.value, '', 'repository changes reset draft queries');
     assert.equal(elements.searchScope.value, 'all');
+    elements.searchKind.value = 'code'; elements.searchText.value = ' 中文 [.*] ';
+    elements.searchPath.value = 'src/[x].txt'; elements.searchSince.value = '2024-03-01'; elements.searchUntil.value = '2024-03-02';
+    elements.search.submit({ preventDefault() {} });
+    assert.deepEqual(JSON.parse(JSON.stringify(messages.at(-1))), { type: 'search', kind: 'code', text: ' 中文 [.*] ', scope: 'all', path: 'src/[x].txt', since: '2024-03-01', until: '2024-03-02' });
+    renderSearch({ kind: 'message', text: '', scope: 'all', path: 'src/[x].txt', since: '2024-03-01', until: '2024-03-02' }, [merge, root], true, 'other-repo');
+    assert.match(elements.status.textContent, /路径: src\/\[x\]\.txt · 从 2024-03-01 · 至 2024-03-02/);
+    assert.equal(elements.rows.children[0].children[0].children[0].children.some(child => child.name === 'path'), false, 'path/date filters also omit unverifiable graph edges');
+    elements.searchPath.value = 'draft.txt'; elements.searchUntil.value = '2024-03-03'; elements.search.input();
+    renderSearch({ kind: 'message', text: '', scope: 'all', path: 'src/[x].txt', until: '2024-03-02' }, [root], false, 'other-repo');
+    assert.equal(elements.searchPath.value, 'draft.txt'); assert.equal(elements.searchUntil.value, '2024-03-03', 'new filter drafts survive earlier responses');
+    click({ target: { closest: selector => selector === '[data-action]' ? { dataset: { action: 'clearSearch' } } : null } });
+    assert.deepEqual(JSON.parse(JSON.stringify(messages.at(-1))), { type: 'search', kind: 'message', text: '', scope: 'all' }, 'clear removes every extra filter');
+    assert.equal(elements.searchPath.value, ''); assert.equal(elements.searchSince.value, ''); assert.equal(elements.searchUntil.value, '');
+    renderSearch({ kind: 'message', text: '', scope: 'all', since: '2024-03-01' }, [], false, 'other-repo');
+    assert.match(elements.rows.children[0].textContent, /没有匹配的提交/, 'date-only no-results is not an empty repository');
     receive({ data: { type: 'loading' } });
     assert.equal(elements.rows.children.length, 0, 'loading hides inactive rows from the previous query');
     assert.equal(elements.more.hidden, true);
     receive({ data: { type: 'error', message: 'Hash 查询失败' } });
     assert.equal(elements.rows.children[0].textContent, 'Hash 查询失败');
     assert.equal(elements.more.hidden, true, 'failed queries do not keep the previous load-more action');
+    renderSearch({ kind: 'message', text: '', scope: 'all' }, [root]);
+    assert.equal(elements.rows.children.length, 1, 'a corrected query recovers after errors');
     console.log('Commit graph Webview passed (CSP, SVG lanes, refs, empty state, actions and search regressions).');
   } finally {
     Module._load = originalLoad;

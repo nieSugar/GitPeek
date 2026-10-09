@@ -55,22 +55,29 @@ export async function resolveBaseBranch(git: GitService, repo: Repository, confi
 }
 
 export async function loadBranchCompare(git: GitService, repo: Repository, base: string): Promise<BranchCompareSummary> {
-  const [status, head] = await Promise.all([
+  const readRefs = () => Promise.all([
     git.status(repo),
     git.run(repo, ['rev-parse', '--verify', '--end-of-options', 'HEAD^{commit}']).then((value) => value.trim()),
-  ])
+    git.run(repo, ['rev-parse', '--verify', '--end-of-options', `${base}^{commit}`]).then((value) => value.trim()),
+  ] as const)
+  const [status, head, baseHead] = await readRefs()
   if (!/^[0-9a-f]{40,64}$/i.test(head)) throw new Error('当前分支尚无提交。')
+  if (!/^[0-9a-f]{40,64}$/i.test(baseHead)) throw new Error(`基准分支“${base}”没有有效提交。`)
 
   let mergeBase: string
   try {
-    mergeBase = (await git.run(repo, ['merge-base', base, head])).trim()
+    mergeBase = (await git.run(repo, ['merge-base', baseHead, head])).trim()
   } catch {
     throw new Error(`基准分支“${base}”与当前分支没有共同祖先。`)
   }
   if (!mergeBase) throw new Error(`基准分支“${base}”与当前分支没有共同祖先。`)
 
   // GitService.compare uses base...HEAD for the file set and counts; that diff is merge-base(base, HEAD) → HEAD.
-  const comparison = await git.compare(repo, base, head)
+  const comparison = await git.compare(repo, baseHead, head)
+  const [latestStatus, latestHead, latestBase] = await readRefs()
+  if (latestHead !== head || latestBase !== baseHead || latestStatus.branch !== status.branch) {
+    throw new Error('分支或基准已变化，请重新运行“与基准分支比较”。')
+  }
   const additions = comparison.files.reduce((total, file) => total + (file.additions ?? 0), 0)
   const deletions = comparison.files.reduce((total, file) => total + (file.deletions ?? 0), 0)
   return {
@@ -170,7 +177,7 @@ export function registerBranchCompare(
     watchedRepoId = repo.id
     let paths: string[]
     try {
-      paths = await Promise.all(['HEAD', 'packed-refs', 'refs/heads', 'logs/HEAD'].map(async (path) =>
+      paths = await Promise.all(['HEAD', 'packed-refs', 'refs', 'logs/HEAD'].map(async (path) =>
         resolve(repo.root, (await git.run(repo, ['rev-parse', '--git-path', path])).trim())))
     } catch {
       if (request === watcherRequest) watchedRepoId = undefined
@@ -179,8 +186,8 @@ export function registerBranchCompare(
     if (request !== watcherRequest || !enabled() || activeRepo?.id !== repo.id) return
     const watchers: vscode.FileSystemWatcher[] = []
     for (const path of paths) {
-      const isHeadsDir = path.endsWith('refs/heads')
-      const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(isHeadsDir ? path : dirname(path)), isHeadsDir ? '**/*' : basename(path)))
+      const isRefsDir = basename(path) === 'refs'
+      const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(isRefsDir ? path : dirname(path)), isRefsDir ? '**/*' : basename(path)))
       watcher.onDidChange(() => { if (enabled() && activeRepo?.id === repo.id) void refresh() })
       watcher.onDidCreate(() => { if (enabled() && activeRepo?.id === repo.id) void refresh() })
       watcher.onDidDelete(() => { if (enabled() && activeRepo?.id === repo.id) void refresh() })

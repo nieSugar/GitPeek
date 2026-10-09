@@ -1,3 +1,4 @@
+import { posix, win32 } from 'node:path';
 import type { GitService } from '../git/GitService';
 import type { Repository } from '../git/types';
 
@@ -20,9 +21,42 @@ export interface GraphSnapshot {
 }
 
 export interface GraphQuery {
-  kind: 'message' | 'author' | 'hash';
+  kind: 'message' | 'author' | 'hash' | 'code';
   text: string;
   scope: 'all' | 'current';
+  path?: string;
+  since?: string;
+  until?: string;
+}
+
+export function normalizeGraphQuery(value: unknown): GraphQuery {
+  if (!value || typeof value !== 'object') throw new Error('搜索条件无效。');
+  const query = value as Record<string, unknown>;
+  if (!['message', 'author', 'hash', 'code'].includes(String(query.kind)) || !['all', 'current'].includes(String(query.scope))
+    || typeof query.text !== 'string' || query.text.length > 500 || query.text.includes('\0')) throw new Error('搜索类型或内容无效（最多 500 个字符）。');
+  const result: GraphQuery = { kind: query.kind as GraphQuery['kind'], text: query.kind === 'code' ? query.text : query.text.trim(), scope: query.scope as GraphQuery['scope'] };
+  for (const key of ['path', 'since', 'until'] as const) {
+    if (query[key] === undefined || query[key] === '') continue;
+    if (typeof query[key] !== 'string') throw new Error('搜索路径或日期格式无效。');
+    result[key] = query[key];
+  }
+  if (result.path) {
+    if (result.path.length > 4096 || result.path.includes('\0') || posix.isAbsolute(result.path) || win32.isAbsolute(result.path)
+      || /^[A-Za-z]:/.test(result.path) || result.path.split(/[\\/]/).includes('..')) throw new Error('请输入仓库内的相对文件或目录路径，不能包含 ..。');
+    result.path = result.path.replace(/\\/g, '/');
+  }
+  if (result.since) searchDate(result.since);
+  if (result.until) searchDate(result.until);
+  if (result.since && result.until && result.since > result.until) throw new Error('开始日期不能晚于结束日期。');
+  return result;
+}
+
+function searchDate(value: string, end = false): string {
+  const date = new Date(value + 'T00:00:00');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(date.getTime())
+    || date.getFullYear() !== Number(value.slice(0, 4)) || date.getMonth() + 1 !== Number(value.slice(5, 7)) || date.getDate() !== Number(value.slice(8))) throw new Error('日期必须是有效的 YYYY-MM-DD。');
+  if (end) date.setHours(23, 59, 59, 0);
+  return date.toISOString();
 }
 
 export function parseGraph(output: string, limit: number): Pick<GraphSnapshot, 'rows' | 'hasMore'> {
@@ -48,6 +82,7 @@ export function parseGraph(output: string, limit: number): Pick<GraphSnapshot, '
 }
 
 export async function loadGraph(git: GitService, repo: Repository, limit = 100, query?: GraphQuery): Promise<GraphSnapshot> {
+  if (query) query = normalizeGraphQuery(query);
   const count = Math.max(1, Math.floor(limit));
   const [branch, branches, head] = await Promise.all([
     git.run(repo, ['branch', '--show-current']),
@@ -68,14 +103,17 @@ export async function loadGraph(git: GitService, repo: Repository, limit = 100, 
         }
       }
       refs.splice(0, refs.length, hash);
-    } else filters.push('--fixed-strings', '--regexp-ignore-case', `${query.kind === 'author' ? '--author' : '--grep'}=${query.text}`);
+    } else if (query.kind === 'code') filters.push(`-S${query.text}`);
+    else filters.push('--fixed-strings', '--regexp-ignore-case', `${query.kind === 'author' ? '--author' : '--grep'}=${query.text}`);
   }
+  if (query?.since) filters.push(`--since-as-filter=${searchDate(query.since)}`);
+  if (query?.until) filters.push(`--until=${searchDate(query.until, true)}`);
   const hashSearch = Boolean(query?.text && query.kind === 'hash');
   // --max-count enables traversal; exact Hash queries must put --no-walk after it.
   const result = head ? parseGraph(await git.run(repo, [
     'log', ...(hashSearch ? [] : ['--graph']), ...filters, ...refs, '--date-order', `--max-count=${count + 1}`, ...(hashSearch ? ['--no-walk'] : []),
-    '--pretty=format:%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%s%x1f%D%x1e',
-    '--',
+    '--pretty=format:%H%x1f%P%x1f%an%x1f%ae%x1f%ct%x1f%s%x1f%D%x1e',
+    '--', ...(query?.path ? [`:(literal)${query.path}`] : []),
   ], { timeoutMs: 10_000 }), count) : { rows: [], hasMore: false };
   return { branch: branch.trim(), branches: branches.trim().split(/\r?\n/).filter(Boolean), ...result };
 }

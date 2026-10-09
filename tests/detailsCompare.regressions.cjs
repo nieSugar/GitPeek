@@ -20,7 +20,7 @@ async function main() {
     workspace: { textDocuments: [], getConfiguration: () => ({ get: (key, fallback) => key === 'enabled' ? enabled : fallback }),
       onDidChangeConfiguration: handler => (configurationHandlers.push(handler), disposable),
       registerTextDocumentContentProvider: (name, provider) => (providers.set(name, provider), disposable) },
-    window: { createTreeView: (name, options) => (views.set(name, options.treeDataProvider), disposable),
+    window: { onDidChangeActiveTextEditor: () => disposable, createTreeView: (name, options) => (views.set(name, options.treeDataProvider), disposable),
       showInformationMessage: async message => notices.push(message), showWarningMessage: async message => notices.push(message),
       showErrorMessage: async message => assert.fail(message), showQuickPick: async () => undefined },
     commands: { registerCommand: (name, handler) => (commands.set(name, handler), disposable),

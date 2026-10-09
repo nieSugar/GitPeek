@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { GitService } from './git/GitService';
 import { RepositoryService } from './git/RepositoryService';
 import { BlameController } from './features/blame';
+import { registerFileBlame } from './features/fileBlame';
 import { registerHistory } from './features/history';
 import { registerSidebar } from './features/sidebar';
 import { registerCommitFeatures } from './features/commitDetail';
@@ -14,6 +15,7 @@ import { generateCommitMessage } from './features/smartCommit';
 import { registerStashFeatures } from './features/stashFeature';
 import { registerRevisionCompare } from './features/revisionCompare';
 import { registerSelectionHistory } from './features/selectionHistory';
+import { registerRebaseEditor } from './features/rebaseEditor';
 import type { Repository } from './git/types';
 
 const output = vscode.window.createOutputChannel('GitPeek');
@@ -25,10 +27,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   registerStashFeatures(context, git, repositories);
   const commits = registerCommitFeatures(context, git);
   registerRevisionCompare(context, git);
-  registerSelectionHistory(context, git, repositories, commits.showCommit);
-  const graph = registerCommitGraph(context, git, repositories, commits.showCommit);
+  registerSelectionHistory(context, git, repositories, commits.showCommit, commits.showDiff);
+  const rebase = registerRebaseEditor(context, git, repositories, commits.showCommit);
+  const graph = registerCommitGraph(context, git, repositories, commits.showCommit, rebase.show);
   const blame = new BlameController(git, repositories, commits);
   context.subscriptions.push(blame);
+  const fileBlame = registerFileBlame(context, git, repositories, { ...commits, setLineBlameSuspended: value => blame.setSuspended(value) });
   const history = await registerHistory(context, git, repositories, commits.showDiff);
   const review = await registerReviewChanges(context, git, repositories);
   const sidebar = registerSidebar(context, history, review.sidebar, commits.showCommit);
@@ -49,6 +53,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const repo = typeof target?.root === 'string' && typeof target.id === 'string' ? target : undefined;
     repositories.clearCache();
     blame.refresh();
+    fileBlame.refresh();
     sidebar.refresh();
     void branch.refresh();
     void review.refresh(repo).catch(() => undefined);

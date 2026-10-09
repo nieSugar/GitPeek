@@ -30,9 +30,9 @@ async function main() {
     git(repoB.root, 'config', 'user.name', 'GitPeek Test');
     git(repoB.root, 'config', 'user.email', 'test@example.invalid');
     const hash = git(repoA.root, 'rev-parse', 'HEAD');
-    const commands = new Map(), messages = [], copied = [], opened = [], shown = [], warnings = [], info = [], errors = [];
+    const commands = new Map(), messages = [], copied = [], opened = [], shown = [], rebaseRequests = [], warnings = [], info = [], errors = [];
     const disposable = { dispose() {} };
-    let receive, selectedRepo = repoA, enabled = true, warningAnswer;
+    let receive, selectedRepo = repoA, enabled = true, warningAnswer, pickAnswer;
     let picks = 0;
     const uri = fields => ({ ...fields, toString() { return JSON.stringify(fields); } });
     const panel = {
@@ -53,7 +53,7 @@ async function main() {
         onDidChangeActiveTextEditor: () => disposable, onDidChangeWindowState: () => disposable,
         createWebviewPanel: () => panel, createTreeView: () => disposable,
         createStatusBarItem: () => ({ ...disposable, hide() {}, show() {} }),
-        showQuickPick: async () => { picks++; },
+        showQuickPick: async items => { picks++; return typeof pickAnswer === 'function' ? pickAnswer(items) : pickAnswer; },
         showInformationMessage: async message => info.push(message),
         showWarningMessage: async (...args) => { warnings.push(args); return typeof warningAnswer === 'function' ? warningAnswer() : warningAnswer; },
         showErrorMessage: async message => errors.push(message),
@@ -88,9 +88,9 @@ async function main() {
     const context = { subscriptions };
     feature('commitDetail').registerCommitFeatures(context, service);
     feature('revisionCompare').registerRevisionCompare(context, service);
-    feature('selectionHistory').registerSelectionHistory(context, service, repositories, async () => {});
+    feature('selectionHistory').registerSelectionHistory(context, service, repositories, async () => {}, async () => {});
     const showCommit = async (...args) => shown.push(args);
-    const graph = feature('commitGraph').registerCommitGraph(context, service, repositories, showCommit);
+    const graph = feature('commitGraph').registerCommitGraph(context, service, repositories, showCommit, async (...args) => rebaseRequests.push(args));
     const history = await feature('history').registerHistory(context, service, repositories, async (...args) => opened.push(['historyDiff', ...args]));
     const review = await feature('reviewChanges').registerReviewChanges(context, service, repositories);
     feature('sidebar').registerSidebar(context, history, review.sidebar, showCommit);
@@ -105,6 +105,11 @@ async function main() {
       return { gitpeekGraphRepoId: render.repoId, gitpeekGraphGeneration: render.generation, gitpeekCommitHash: hash };
     };
     const targetA = graphTarget();
+    await run('gitpeek.internal.graph.rebase', targetA);
+    assert.deepEqual(rebaseRequests.at(-1), [repoA, hash], 'commit menu opens the editor at the selected commit');
+    receive({ type: 'rebase', repoId: targetA.gitpeekGraphRepoId, generation: targetA.gitpeekGraphGeneration });
+    assert.deepEqual(rebaseRequests.at(-1), [repoA], 'toolbar opens the current repository without a commit');
+    assert.equal(rebaseRequests.length, 2);
     await run('gitpeek.internal.graph.copy', targetA);
     assert.equal(copied.at(-1), hash);
     await run('gitpeek.internal.graph.commit', targetA);
@@ -121,16 +126,34 @@ async function main() {
     await run('gitpeek.internal.graph.copy', targetA);
     await run('gitpeek.internal.graph.copy', { ...graphTarget(), gitpeekCommitHash: 'f'.repeat(40) });
     assert.equal(copied.length, count, 'stale and unknown commits are rejected');
+    await run('gitpeek.internal.graph.rebase', targetA);
+    await run('gitpeek.internal.graph.rebase', { ...graphTarget(), gitpeekCommitHash: 'f'.repeat(40) });
+    receive({ type: 'rebase', repoId: targetA.gitpeekGraphRepoId, generation: targetA.gitpeekGraphGeneration });
+    assert.equal(rebaseRequests.length, 2, 'stale toolbar and unknown commit targets cannot open rebase');
     selectedRepo = repoB;
     await run('gitpeek.showCommitGraph');
     await run('gitpeek.internal.graph.copy', { ...graphTarget(), gitpeekGraphRepoId: repoA.id });
     assert.equal(copied.length, count, 'the same hash in another repository cannot reuse a menu');
+    await run('gitpeek.internal.graph.rebase', { ...graphTarget(), gitpeekGraphRepoId: repoA.id });
+    assert.equal(rebaseRequests.length, 2, 'rebase uses the repository captured by the menu');
     enabled = false;
     await run('gitpeek.internal.graph.copy', graphTarget());
     assert.equal(copied.length, count, 'disabled graph rejects actions');
+    await run('gitpeek.internal.graph.rebase', graphTarget());
+    receive({ type: 'rebase', repoId: graphTarget().gitpeekGraphRepoId, generation: graphTarget().gitpeekGraphGeneration });
+    assert.equal(rebaseRequests.length, 2, 'disabled graph rejects rebase entry points');
     enabled = true;
     await run('gitpeek.internal.graph.commit', graphTarget());
     assert.deepEqual(shown.at(-1), [repoB, hash]);
+    pickAnswer = items => items.find(item => item.action === 'rebase');
+    receive({ type: 'actions', hash, repoId: repoB.id, generation: graphTarget().gitpeekGraphGeneration });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(rebaseRequests.at(-1), [repoB, hash], 'more actions opens rebase for the current commit');
+    assert.equal(rebaseRequests.length, 3);
+    receive({ type: 'actions', hash, repoId: repoA.id, generation: graphTarget().gitpeekGraphGeneration });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(rebaseRequests.length, 3, 'stale more-actions messages cannot reuse another repository');
+    pickAnswer = undefined;
 
     vscode.window.activeTextEditor = { document: { uri: vscode.Uri.file(path.join(repoA.root, file)) } };
     const targetUri = vscode.Uri.file(path.join(repoB.root, file));
@@ -138,7 +161,7 @@ async function main() {
     const historyItem = (await history.provider.getChildren()).find(item => item.contextValue === 'gitpeek.historyCommit');
     assert.ok(historyItem);
     await run('gitpeek.internal.tree.openDiff', historyItem);
-    assert.deepEqual(opened.at(-1), ['historyDiff', repoB, hash, file]);
+    assert.deepEqual(opened.at(-1), ['historyDiff', repoB, hash, file, file]);
     await run('gitpeek.internal.tree.showCommit', historyItem);
     assert.deepEqual(shown.at(-1), [repoB, hash]);
     await run('gitpeek.internal.tree.copyHash', historyItem);
@@ -234,8 +257,8 @@ async function main() {
       assert.ok(commands.has(command), `menu command is registered: ${command}`);
       assert.ok(contributes.menus.commandPalette.some(item => item.command === command && item.when === 'false'));
     }
-    assert.equal(contributes.commands.length - menuCommands.length, 11, 'only selection history adds a public command');
-    assert.equal(contributes.menus['webview/context'].length, 6);
+    assert.equal(contributes.commands.length - menuCommands.length, 17, 'public investigation commands are contributed');
+    assert.equal(contributes.menus['webview/context'].length, 7);
     assert.equal(contributes.commands.find(item => item.command === 'gitpeek.refresh').icon, '$(refresh)');
     assert.ok(contributes.menus['view/title'].some(item => item.command === 'gitpeek.refresh' && item.group.startsWith('navigation')));
     for (const item of contributes.menus['webview/context']) assert.match(item.when, /webviewId == gitpeek.commitGraph && webviewSection == commit/);

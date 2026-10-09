@@ -26,7 +26,7 @@ async function main() {
     Uri: { file: fsPath => ({ scheme: 'file', fsPath, toString: () => fsPath }), from: values => ({ ...values, toString: () => JSON.stringify(values) }) },
     workspace: { textDocuments: [], getConfiguration: () => ({ get: (key, fallback) => key === 'enabled' ? enabled : fallback }),
       onDidChangeConfiguration: () => disposable, registerTextDocumentContentProvider: (name, provider) => { providers.set(name, provider); return disposable; } },
-    window: { createTreeView: (name, options) => { views.set(name, options.treeDataProvider); return disposable; },
+    window: { onDidChangeActiveTextEditor: () => disposable, createTreeView: (name, options) => { views.set(name, options.treeDataProvider); return disposable; },
       showInformationMessage: async text => info.push(text), showWarningMessage: async text => info.push(text), showErrorMessage: async text => errors.push(text),
       showQuickPick: async () => undefined },
     commands: { registerCommand: (name, callback) => { commands.set(name, callback); return disposable; },

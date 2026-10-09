@@ -82,6 +82,30 @@ async function main() {
     const blame = await service.blame(repoA, "目录 & 'quote'/改名.txt", 2)
     assert.equal(blame[0].summary, 'initial')
     assert.equal(blame[0].filename, "目录 & 'quote'/空 格.txt")
+    const snapshot = await service.blameContents(repoA, "目录 & 'quote'/改名.txt", 'new unsaved line\none\ntwo\nfour\n')
+    assert.equal(snapshot.length, 4, 'a trailing newline does not invent a fifth line')
+    assert.match(snapshot[0].hash, /^0+$/)
+    assert.equal(snapshot[2].summary, 'initial')
+    assert.equal(snapshot[2].currentLine, 3)
+    assert.equal(snapshot[2].filename, "目录 & 'quote'/空 格.txt")
+    assert.equal(git(first, 'status', '--porcelain'), '', 'stdin blame leaves disk and index unchanged')
+    assert.deepEqual(await service.blameContents(repoA, 'missing.txt', ''), [])
+    git(first, 'config', 'core.autocrlf', 'true')
+    const crlfSnapshot = await service.blameContents(repoA, "目录 & 'quote'/改名.txt", 'one\r\ntwo\r\nfour\r\n')
+    assert.equal(crlfSnapshot.length, 3)
+    assert.ok(crlfSnapshot.every(line => !/^0+$/.test(line.hash)), 'Git clean conversion preserves CRLF attribution')
+    git(first, 'config', 'core.autocrlf', 'false')
+    const sourceText = '中文 text\n'
+    assert.equal((await service.run(repoA, ['hash-object', '--stdin'], { input: sourceText })).trim(),
+      execFileSync('git', ['hash-object', '--stdin'], { encoding: 'utf8', input: sourceText }).trim())
+    await assert.rejects(service.run(repoA, ['not-a-git-command'], { input: 'x'.repeat(200000) }), /执行失败/)
+
+
+    writeFileSync(join(second, 'bom.txt'), '\uFEFFone\ntwo\n', 'utf8')
+    git(second, 'add', '--all'); git(second, 'commit', '-m', 'BOM file')
+    const bomBlame = await service.blameContents(repoB, 'bom.txt', 'one\ntwo\n')
+    assert.equal(bomBlame.length, 2)
+    assert.ok(bomBlame.every(line => !/^0+$/.test(line.hash)), 'editor BOM metadata does not invent an uncommitted first line')
 
     writeFileSync(join(first, '--特殊 & 文档.md'), 'pending\n', 'utf8')
     const dirty = await service.status(repoA)

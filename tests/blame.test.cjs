@@ -85,8 +85,20 @@ async function main() {
     handlers.change({ document });
     await until(() => rendered.at(-1)?.[0]?.renderOptions?.after?.contentText === '你 · 未提交的更改');
     assert.ok(commands.some((args) => args[0] === 'ls-tree' && args.at(-1) === ':(literal)staged-new.ts'));
+    const beforeSuspension = commands.length;
+    controller.setSuspended(true);
+    controller.refresh();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.deepEqual(rendered.at(-1), [], 'full-file blame clears the single-line decoration');
+    assert.equal(commands.length, beforeSuspension, 'suspension prevents single-line Git requests');
+    controller.setSuspended(false);
+    await until(() => rendered.at(-1)?.[0]?.renderOptions?.after?.contentText === '你 · 未提交的更改');
     controller.dispose();
-    console.log('Blame check passed (stale result, dirty/large files, staged new file).');
+    const beforeDisposal = commands.length;
+    controller.setSuspended(false);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(commands.length, beforeDisposal, 'disposing full-file blame cannot restart a disposed line controller');
+    console.log('Blame check passed (stale result, dirty/large files, staged new file, suspension and disposal).');
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }

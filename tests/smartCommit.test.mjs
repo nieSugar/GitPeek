@@ -31,7 +31,8 @@ assert.equal(generateCommitCandidates('M\0.env\0', true, 'chore')[0].label, 'cho
 
 const first = { rootUri: { fsPath: 'C:\\repo-one' }, inputBox: { value: '' } };
 const second = { rootUri: { fsPath: 'C:\\Work\\repo-two\\' }, inputBox: { value: 'draft' } };
-assert.equal(findGitRepositoryByRoot([first, second], 'c:/work/repo-two'), second);
+assert.equal(findGitRepositoryByRoot([first, second], 'C:/Work/repo-two'), second);
+assert.equal(findGitRepositoryByRoot([first, second], 'c:/work/repo-two'), process.platform === 'win32' ? second : undefined);
 assert.equal(findGitRepositoryByRoot([first, second], 'C:/missing'), undefined);
 
 const scmInput = { value: 'keep this draft' };
@@ -55,11 +56,13 @@ const hostVscode = {
   workspace: { workspaceFolders: [{ uri: { fsPath: 'C:/workspace' } }] },
 };
 const PUBLIC_COMMANDS = [
+  'gitpeek.interactiveRebase', 'gitpeek.continueRebase', 'gitpeek.abortRebase',
+  'gitpeek.toggleFileBlame', 'gitpeek.previousFileRevision', 'gitpeek.nextFileRevision',
   'gitpeek.fileHistory', 'gitpeek.showCommitGraph', 'gitpeek.stash', 'gitpeek.blameCurrentLine', 'gitpeek.selectionOrigins', 'gitpeek.compareWithBase',
   'gitpeek.showBranchChanges', 'gitpeek.reviewChanges', 'gitpeek.generateCommitMessage', 'gitpeek.refresh', 'gitpeek.selectionHistory',
 ];
 const hostResult = await runHostProbe({ vscode: hostVscode });
-assert.equal(hostResult.publicCommands, 11);
+assert.equal(hostResult.publicCommands, PUBLIC_COMMANDS.length);
 assert.equal(hostResult.repositories[0].root, repository.rootUri.fsPath);
 assert.equal(scmInput.value, 'keep this draft', 'the host probe must not change the SCM draft');
 await assert.rejects(runHostProbe({

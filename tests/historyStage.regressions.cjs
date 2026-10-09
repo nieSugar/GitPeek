@@ -9,7 +9,7 @@ const esbuild = require('esbuild');
 async function main() {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'gitpeek-history-stage-'));
   const originalLoad = Module._load;
-  const commands = new Map(), errors = [], warnings = [], shown = [];
+  const commands = new Map(), errors = [], warnings = [], shown = [], diffs = [];
   const disposable = { dispose() {} };
   let pick = async items => items[0];
   const vscode = {
@@ -60,22 +60,43 @@ async function main() {
     assert.equal((await loadSelectionHistory(service, crlf, file, { startLine: 1, endLine: 1 })).commits[0].hash, crlfHead, 'CRLF checkout maps to the same HEAD lines');
 
     const selection = { isEmpty: false, start: { line: 0, character: 0 }, end: { line: 1, character: 0 } };
-    const document = { uri: vscode.Uri.file(path.join(repo.root, file)), isDirty: false, version: 1 };
+    const document = { uri: vscode.Uri.file(path.join(repo.root, file)), isDirty: false, version: 1, getText() { return fs.readFileSync(this.uri.fsPath, 'utf8'); } };
     const editor = { document, selection };
     vscode.window.activeTextEditor = editor;
-    registerSelectionHistory({ subscriptions: [] }, service, { forUri: async () => repo }, async (_repo, hash) => shown.push(hash));
+    registerSelectionHistory({ subscriptions: [] }, service, { forUri: async () => repo }, async (_repo, hash) => shown.push(hash), async (target, hash, filePath, workspacePath) => diffs.push({ repo: target, hash, filePath, workspacePath }));
     pick = async items => { assert.match(items[0].label, /first line changed/); return items[0]; };
-    await commands.get('gitpeek.selectionHistory')(); assert.deepEqual(shown, [edit], 'exclusive endpoint tracks only the first line');
-    shown.length = 0;
+    await commands.get('gitpeek.selectionHistory')(); assert.deepEqual(diffs, [{ repo, hash: edit, filePath: file, workspacePath: file }], 'selection opens the matching historical file directly');
+    assert.deepEqual(shown, [], 'known paths skip the commit/file selection step');
+    diffs.length = 0;
     git(repo, 'update-index', '--assume-unchanged', file);
     pick = async items => { write(repo, file, 'local prefix\n' + changed); return items[0]; };
-    await commands.get('gitpeek.selectionHistory')(); assert.deepEqual(shown, []); assert.match(errors.pop(), /未提交/);
+    await commands.get('gitpeek.selectionHistory')(); assert.deepEqual(shown, []); assert.deepEqual(errors, [], 'a changed editor snapshot silently invalidates the old picker');
     write(repo, file, changed); git(repo, 'update-index', '--no-assume-unchanged', file);
     pick = async items => { write(repo, 'other.txt', 'new HEAD\n'); commit(repo, 'unrelated HEAD changed'); return items[0]; };
     await commands.get('gitpeek.selectionHistory')(); assert.deepEqual(shown, []); assert.match(errors.pop(), /HEAD 已变化/);
     pick = async () => undefined;
     await commands.get('gitpeek.selectionHistory')(); assert.deepEqual(shown, []); assert.deepEqual(errors, []);
     assert.notEqual(git(repo, 'rev-parse', 'HEAD'), initial);
+    assert.deepEqual(diffs, [], 'stale or cancelled selections cannot open a diff');
+
+    const renamed = make('renamed'), oldPath = 'before [x].txt';
+    write(renamed, oldPath, original); const oldHash = commit(renamed, 'before rename');
+    git(renamed, 'mv', '--', oldPath, file); commit(renamed, 'rename only');
+    document.uri = vscode.Uri.file(path.join(renamed.root, file));
+    registerSelectionHistory({ subscriptions: [] }, service, { forUri: async () => renamed },
+      async (_repo, hash) => shown.push(hash), async (target, hash, filePath, workspacePath) => diffs.push({ repo: target, hash, filePath, workspacePath }));
+    pick = async items => items.find(item => item.hash === oldHash);
+    await commands.get('gitpeek.selectionHistory')();
+    assert.deepEqual(diffs, [{ repo: renamed, hash: oldHash, filePath: oldPath, workspacePath: file }], 'rename history uses its original path and selected repository');
+    assert.deepEqual(shown, []);
+    document.uri = vscode.Uri.file(path.join(repo.root, file));
+    const missingPath = new GitService(), runWithPath = missingPath.run.bind(missingPath);
+    missingPath.run = (target, args, options) => args[0] === 'log' && args.includes('--follow') ? Promise.resolve('') : runWithPath(target, args, options);
+    registerSelectionHistory({ subscriptions: [] }, missingPath, { forUri: async () => repo },
+      async (_repo, hash) => shown.push(hash), async () => assert.fail('an unknown historical path must not be guessed'));
+    pick = async items => items[0];
+    await commands.get('gitpeek.selectionHistory')();
+    assert.deepEqual(shown, [edit], 'unknown paths fall back to commit details');
 
     vscode.window.activeTextEditor = undefined;
     vscode.workspace.textDocuments = [document];
