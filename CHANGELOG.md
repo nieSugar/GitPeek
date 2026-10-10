@@ -4,8 +4,12 @@
 
 ## [Unreleased]
 
-- 新增跨文件、跨分支连续调查：固定文件历史、选择分支／标签／提交快照、浏览版本内文件，后退／前进恢复分页与选中提交；保持工作区分支和未提交内容不变。
+## [0.7.1] - 2026-10-10
 
+- 优化当前行归属响应：复用文件归属缓存，缓存命中时切换行即时更新；文件编辑及 Git 状态变化时刷新缓存。
+- 当前行与整文件归属将匹配当前 Git 用户邮箱的提交作者显示为“你”，悬浮详情保留作者身份。
+- 修复当前行归属的悬浮范围，方便查看提交、查看差异及复制提交 Hash。
+- 新增跨文件、跨分支连续调查：固定文件历史、选择分支／标签／提交快照、浏览版本内文件，后退／前进恢复分页与选中提交；保持工作区分支和未提交内容不变。
 - 补充 MIT 许可证与版本更新日志。
 - Release 工作流在推送版本标签后自动发布同一份 VSIX 到 VS Code Marketplace；手动补发默认关闭商店发布，可按需开启重试并跳过已发布版本。
 - 调整调查界面布局：提交图高级筛选默认收起并标明未应用条件；提交详情优先显示变更文件，完整说明可展开；比较双方显示摘要与短 Hash，侧栏详情及比较按需出现。
@@ -59,7 +63,8 @@
 - 新增提交前更改审查，并根据已暂存文件的路径与状态生成提交信息候选，写入当前仓库的 SCM 输入框。
 - 提供中文界面与文档；修复暂存新文件、重命名历史差异及虚拟 Diff 编辑器的仓库上下文处理。
 
-[Unreleased]: https://github.com/nieSugar/GitPeek/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/nieSugar/GitPeek/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/nieSugar/GitPeek/releases/tag/v0.7.1
 [0.7.0]: https://github.com/nieSugar/GitPeek/releases/tag/v0.7.0
 [0.6.0]: https://github.com/nieSugar/GitPeek/releases/tag/v0.6.0
 [0.5.0]: https://github.com/nieSugar/GitPeek/releases/tag/v0.5.0
