@@ -25,11 +25,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const git = new GitService((message) => output.appendLine(message));
   const repositories = new RepositoryService(git);
   registerStashFeatures(context, git, repositories);
-  const commits = registerCommitFeatures(context, git);
+  const commits = registerCommitFeatures(context, git, repositories);
   registerRevisionCompare(context, git);
   registerSelectionHistory(context, git, repositories, commits.showCommit, commits.showDiff);
   const rebase = registerRebaseEditor(context, git, repositories, commits.showCommit);
-  const graph = registerCommitGraph(context, git, repositories, commits.showCommit, rebase.show);
+  const graph = registerCommitGraph(context, git, repositories, commits.showCommit, rebase.show, commits.showDiff);
   const blame = new BlameController(git, repositories, commits);
   context.subscriptions.push(blame);
   const fileBlame = registerFileBlame(context, git, repositories, { ...commits, setLineBlameSuspended: value => blame.setSuspended(value) });

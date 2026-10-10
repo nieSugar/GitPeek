@@ -16,18 +16,23 @@ async function main() {
       { hash: 'b'.repeat(40), subject: 'second', message: 'second' },
     ];
     const plan = { repo, branch: 'feature', head: commits[1].hash, commits, published: true };
-    const disposable = { dispose() {} }, commands = new Map(), panels = [], errors = [], warnings = [], shown = [];
-    let enabled = true, answer, startCalls = 0, pendingStart, savedState;
+    const disposable = { dispose() {} }, commands = new Map(), panels = [], errors = [], warnings = [], shown = [], executed = [];
+    let enabled = true, answer, startCalls = 0, pendingStart, savedState, operationState, resumeCalls = 0, recoveryCalls = 0;
+    const backup = { ref: 'refs/gitpeek/rebase/test', head: 'c'.repeat(40), date: '2026-10-10', subject: 'old history' };
     const backend = {
       loadRebasePlan: async () => plan,
       validateRebaseSteps: (_plan, steps) => { if (!Array.isArray(steps)) throw new Error('计划无效'); return steps; },
-      readRebaseState: async () => savedState,
+      readGitOperation: async () => operationState ?? (savedState ? { kind: 'rebase', conflicts: ['conflict.txt'], rebase: savedState } : undefined),
+      listRebaseBackups: async () => [backup],
+      compareRebaseBackup: async () => ({ repo, backup, head: commits[1].hash, files: [{ status: 'M', path: 'conflict.txt' }] }),
+      createRecoveryBranch: async () => { recoveryCalls++; },
       startRebase: async () => { startCalls++; return new Promise(resolve => { pendingStart = resolve; }); },
-      continueRebase: async () => ({ status: 'completed' }),
+      continueRebase: async () => { resumeCalls++; return { status: 'completed' }; },
       abortRebase: async () => ({ status: 'aborted' }),
     };
     const vscode = {
       ViewColumn: { Active: -1 },
+      Uri: { file: fsPath => ({ scheme: 'file', fsPath }) },
       workspace: { isTrusted: true, textDocuments: [], getConfiguration: () => ({ get: () => enabled }) },
       window: {
         createWebviewPanel: () => {
@@ -39,11 +44,12 @@ async function main() {
           panels.push(panel); return panel;
         },
         showWarningMessage: async (...args) => { warnings.push(args); return typeof answer === 'function' ? answer() : answer; },
-        showErrorMessage: async value => errors.push(value), showInformationMessage: async () => {},
+        showErrorMessage: async value => errors.push(value), showInformationMessage: async () => answer,
+        showQuickPick: async items => items[0], showInputBox: async () => 'recovery/safe',
       },
       commands: {
         registerCommand: (name, callback) => { commands.set(name, callback); return disposable; },
-        executeCommand: async () => {},
+        executeCommand: async (...args) => { executed.push(args); }, getCommands: async () => ['git.openMergeEditor', 'git.openChange'],
       },
     };
     globalThis.__gitpeekRebaseTestBackend = backend;
@@ -59,7 +65,7 @@ async function main() {
     Module._load = function (request, parent, isMain) { return request === 'vscode' ? vscode : originalLoad.call(this, request, parent, isMain); };
     const { registerRebaseEditor, rebaseHtml } = require(outfile);
     const feature = registerRebaseEditor({ subscriptions: [] }, {}, { pickRepository: async () => repo }, async (...args) => shown.push(args));
-    assert.equal(commands.size, 3);
+    assert.equal(commands.size, 5);
     await feature.show(repo, commits[0].hash);
     const panel = panels[0];
     await panel.receive({ type: 'ready' });
@@ -106,6 +112,32 @@ async function main() {
     assert.equal(panels.length, 2, 'a closed panel can reopen a paused operation');
     await panels[1].receive({ type: 'ready' });
     assert.equal(panels[1].messages.at(-1).state.status, 'paused');
+    const pausedToken = panels[1].messages.find(message => message.type === 'plan').token;
+    await panels[1].receive({ type: 'openConflict', token: pausedToken, file: '../outside.txt' });
+    assert.equal(executed.some(call => call[0] === 'git.openMergeEditor'), false, 'webview cannot choose files outside the conflict list');
+    await panels[1].receive({ type: 'openConflict', token: pausedToken, file: 'conflict.txt' });
+    assert.equal(executed.at(-1)[0], 'git.openMergeEditor');
+    await panels[1].receive({ type: 'conflictDiff', token: pausedToken, file: 'conflict.txt' });
+    assert.equal(executed.at(-1)[0], 'git.openChange');
+    await panels[1].receive({ type: 'scm', token: pausedToken });
+    assert.equal(executed.at(-1)[0], 'workbench.view.scm');
+    panels[1].dispose();
+    savedState = { status: 'paused', message: 'external rebase' };
+    await commands.get('gitpeek.continueRebase')();
+    assert.equal(resumeCalls, 0, 'public continue cannot take ownership of an external rebase');
+    panels.at(-1).dispose();
+    savedState = undefined; operationState = { kind: 'merge', conflicts: ['conflict.txt'] };
+    await commands.get('gitpeek.showConflicts')();
+    const conflictPanel = panels.at(-1); await conflictPanel.receive({ type: 'ready' });
+    assert.equal(conflictPanel.messages.at(-1).operation.kind, 'merge');
+    assert.equal(conflictPanel.messages.at(-1).canResume, false);
+    answer = '创建恢复分支…';
+    await commands.get('gitpeek.rebaseBackups')();
+    const compareCalls = executed.filter(call => call[0].startsWith('gitpeek.internal.compare.'));
+    assert.deepEqual(compareCalls.map(call => call[0]), ['gitpeek.internal.compare.selectCompare', 'gitpeek.internal.compare.compareSelected']);
+    assert.equal(compareCalls[0][1].commitTarget.hash, commits[1].hash);
+    assert.equal(compareCalls[1][1].commitTarget.hash, backup.head);
+    assert.equal(recoveryCalls, 1, 'recovery is reached after the fixed-snapshot comparison');
 
     const html = rebaseHtml();
     assert.match(html, /default-src 'none'/);
@@ -121,7 +153,7 @@ async function main() {
       querySelectorAll(selector) { return this.children.flatMap(child => [child, ...child.querySelectorAll('*')]).filter(child => selector === '*' || selector.split(',').includes(child.name)); }
       querySelector(selector) { return this.querySelectorAll('*').find(child => child.name === selector || child.dataset.move && selector === '[data-move="' + child.dataset.move + '"]'); }
     }
-    const elements = Object.fromEntries(['commits', 'status', 'start', 'continue', 'abort', 'refresh', 'repo', 'backup'].map(id => [id, new Element('div')]));
+    const elements = Object.fromEntries(['commits', 'status', 'start', 'continue', 'abort', 'refresh', 'repo', 'backup', 'operation', 'conflicts', 'scm', 'backups', 'heading', 'planHelp'].map(id => [id, new Element('div')]));
     const sent = []; let receive;
     vm.runInNewContext(script, {
       acquireVsCodeApi: () => ({ postMessage: message => sent.push(message) }),
@@ -139,10 +171,17 @@ async function main() {
     assert.deepEqual(JSON.parse(JSON.stringify(sent.at(-1))), { type: 'start', token: 'test-token', steps: [
       { hash: commits[1].hash, action: 'reword', message: '重写标题\n\n正文' }, { hash: commits[0].hash, action: 'pick' },
     ] });
-    receive({ data: { type: 'state', canStart: false, busy: false, canResume: true, state: savedState } });
+    receive({ data: { type: 'state', canStart: false, busy: false, canResume: true, state: { status: 'paused', backupRef: 'refs/gitpeek/rebase/test' }, operation: { kind: 'rebase', conflicts: ['<script>literal.txt'] } } });
     assert.equal(elements.start.disabled, true); assert.equal(elements.continue.hidden, false);
     assert.equal(elements.continue.disabled, false);
     assert.match(elements.backup.textContent, /refs\/gitpeek\/rebase\/test/);
+    assert.match(elements.operation.textContent, /GitPeek 发起/);
+    assert.equal(elements.planHelp.hidden, true);
+    assert.equal(elements.start.hidden, true);
+    assert.match(elements.heading.textContent, /冲突处理/);
+    assert.equal(elements.conflicts.children[0].children[0].textContent, '<script>literal.txt', 'conflict paths are rendered as text');
+    elements.conflicts.children[0].children[1].click();
+    assert.equal(sent.at(-1).type, 'openConflict');
     receive({ data: { type: 'state', canStart: false, busy: false, canResume: false, state: { status: 'paused', message: '外部 rebase' } } });
     assert.equal(elements.continue.disabled, true, 'external rebases cannot be resumed in this editor');
     console.log('Rebase editor checks passed (confirmation, stale messages, dirty documents, trust, double clicks, recovery, reorder, messages and CSP).');

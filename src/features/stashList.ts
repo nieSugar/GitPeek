@@ -1,5 +1,6 @@
 import { FileChange, Repository } from '../git/types'
 import { parseNameStatus, parseNumStat } from '../git/GitParser'
+import { isBinaryNumstat } from './gitContent'
 
 export interface StashEntry {
   ref: string
@@ -9,9 +10,16 @@ export interface StashEntry {
 }
 
 export interface StashPreview {
-  files: FileChange[]
+  files: StashFile[]
   additions: number
   deletions: number
+}
+
+export interface StashFile extends FileChange {
+  ref: string
+  parent?: string
+  untracked: boolean
+  binary: boolean
 }
 
 interface GitRunner {
@@ -50,32 +58,31 @@ export async function previewStash(git: GitRunner, repo: Repository, entry: Stas
     git.run(repo, ['diff', '--numstat', '-z', '-M', `${entry.oid}^1`, entry.oid, '--']),
     git.run(repo, ['rev-list', '--parents', '-n', '1', entry.oid]),
   ])
-  const files = parseNameStatus(trackedNames)
+  const parentOids = parents.trim().split(/\s+/)
   const stats = parseNumStat(trackedStats)
+  const files: StashFile[] = parseNameStatus(trackedNames).map((file) => ({
+    ...file, ...(stats.get(file.path) ?? { additions: 0, deletions: 0 }),
+    ref: entry.oid, parent: parentOids[1], untracked: false, binary: isBinaryNumstat(trackedStats, file.path),
+  }))
 
   // `stash -u` stores untracked files in the third parent, outside the usual stash diff.
-  const parentOids = parents.trim().split(/\s+/)
   if (parentOids.length >= 4) {
     const untrackedParent = parentOids[3]
     const [names, numstat] = await Promise.all([
-      git.run(repo, ['diff', '--name-status', '-z', `${entry.oid}^1`, untrackedParent, '--']),
-      git.run(repo, ['diff', '--numstat', '-z', `${entry.oid}^1`, untrackedParent, '--']),
+      git.run(repo, ['diff-tree', '--root', '--no-commit-id', '-r', '--name-status', '-z', untrackedParent, '--']),
+      git.run(repo, ['diff-tree', '--root', '--no-commit-id', '-r', '--numstat', '-z', untrackedParent, '--']),
     ])
-    const existing = new Set(files.map((file) => file.path))
     const untrackedFiles = parseNameStatus(names).filter((file) => file.status === 'A')
+    const untrackedStats = parseNumStat(numstat)
     for (const file of untrackedFiles) {
-      if (!existing.has(file.path)) files.push(file)
-    }
-    const untrackedPaths = new Set(untrackedFiles.map((file) => file.path))
-    for (const [path, count] of parseNumStat(numstat)) {
-      if (untrackedPaths.has(path)) stats.set(path, count)
+      files.push({ ...file, ...(untrackedStats.get(file.path) ?? { additions: 0, deletions: 0 }),
+        ref: untrackedParent, untracked: true, binary: isBinaryNumstat(numstat, file.path) })
     }
   }
 
-  const detailedFiles = files.map((file) => ({ ...file, ...(stats.get(file.path) ?? { additions: 0, deletions: 0 }) }))
   return {
-    files: detailedFiles,
-    additions: detailedFiles.reduce((sum, file) => sum + (file.additions ?? 0), 0),
-    deletions: detailedFiles.reduce((sum, file) => sum + (file.deletions ?? 0), 0),
+    files,
+    additions: files.reduce((sum, file) => sum + (file.additions ?? 0), 0),
+    deletions: files.reduce((sum, file) => sum + (file.deletions ?? 0), 0),
   }
 }

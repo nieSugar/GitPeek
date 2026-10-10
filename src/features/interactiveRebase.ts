@@ -2,19 +2,24 @@ import { randomUUID } from 'node:crypto'
 import { access, mkdir, readFile, realpath, rmdir, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { GitService } from '../git/GitService'
-import type { Repository } from '../git/types'
+import type { FileChange, Repository } from '../git/types'
+import { parseNameStatus, parseNumStat } from '../git/GitParser'
 
 export type RebaseAction = 'pick' | 'reword' | 'edit' | 'squash' | 'fixup' | 'drop'
 export interface RebaseCommit { hash: string; subject: string; message: string }
 export interface RebasePlan { repo: Repository; branch: string; head: string; base?: string; commits: RebaseCommit[]; published: boolean }
 export interface RebaseStep { hash: string; action: RebaseAction; message?: string }
 export interface RebaseState { status: 'completed' | 'paused' | 'aborted'; backupRef?: string; message?: string }
+export interface GitOperation { kind: 'rebase' | 'merge' | 'cherry-pick' | 'revert'; conflicts: string[]; rebase?: RebaseState }
+export interface RebaseBackup { ref: string; head: string; date: string; subject: string }
+export interface RebaseBackupComparison { repo: Repository; backup: RebaseBackup; head: string; files: FileChange[] }
 
 interface StoredPlan { version: 1; plan: RebasePlan; steps: RebaseStep[]; backupRef: string }
 const actions = new Set<RebaseAction>(['pick', 'reword', 'edit', 'squash', 'fixup', 'drop'])
 const busy = new Set<string>()
 const hashPattern = /^(?:[a-f\d]{40}|[a-f\d]{64})$/i
 const stateDirectory = 'gitpeek-rebase'
+const backupPattern = /^refs\/gitpeek\/rebase\/[a-f\d-]{36}$/
 const rebaseConfig = ['-c', 'rebase.abbreviateCommands=false', '-c', 'rebase.autoSquash=false', '-c', 'rebase.updateRefs=false', '-c', 'commit.cleanup=verbatim', '-c', 'i18n.commitEncoding=UTF-8', '-c', 'i18n.logOutputEncoding=UTF-8']
 
 async function exists(file: string): Promise<boolean> {
@@ -159,7 +164,7 @@ async function readStored(directory: string): Promise<StoredPlan | undefined> {
     throw new Error('GitPeek Rebase 状态文件无法读取，请在终端检查当前 Git 状态。')
   }
   const plan = stored?.plan
-  if (!stored || typeof stored !== 'object' || stored.version !== 1 || typeof stored.backupRef !== 'string' || !/^refs\/gitpeek\/rebase\/[a-f\d-]{36}$/.test(stored.backupRef)
+  if (!stored || typeof stored !== 'object' || stored.version !== 1 || typeof stored.backupRef !== 'string' || !backupPattern.test(stored.backupRef)
     || !plan || typeof plan !== 'object' || typeof plan.head !== 'string' || !hashPattern.test(plan.head)
     || typeof plan.branch !== 'string' || !plan.branch || /[\0\r\n]/.test(plan.branch)
     || (plan.base !== undefined && (typeof plan.base !== 'string' || !hashPattern.test(plan.base))) || typeof plan.published !== 'boolean'
@@ -196,6 +201,57 @@ export async function readRebaseState(git: GitService, repo: Repository): Promis
   const stored = await readStored(directory)
   if (!stored || !(await ownsRebase(active, stored))) return { status: 'paused', message: '当前 Rebase 由其他工具发起，请使用原工具或终端继续、中止。' }
   return { status: 'paused', backupRef: stored.backupRef, message: 'Rebase 已暂停；请解决冲突并暂存，或完成提交编辑后继续。' }
+}
+
+export async function readGitOperation(git: GitService, repo: Repository): Promise<GitOperation | undefined> {
+  const directory = await gitDirectory(git, repo)
+  let kind: GitOperation['kind'] | undefined
+  if (await nativeRebase(directory)) kind = 'rebase'
+  else for (const [marker, operation] of [['MERGE_HEAD', 'merge'], ['CHERRY_PICK_HEAD', 'cherry-pick'], ['REVERT_HEAD', 'revert']] as const) {
+    if (await exists(path.join(directory, marker))) { kind = operation; break }
+  }
+  if (!kind) return undefined
+  const output = await git.run(repo, ['ls-files', '--unmerged', '-z'])
+  const conflicts = [...new Set(output.split('\0').filter(Boolean).map(record => record.slice(record.indexOf('\t') + 1)))]
+  return { kind, conflicts, ...(kind === 'rebase' ? { rebase: await readRebaseState(git, repo) } : {}) }
+}
+
+export async function listRebaseBackups(git: GitService, repo: Repository): Promise<RebaseBackup[]> {
+  const output = await git.run(repo, ['for-each-ref', '--sort=-committerdate', '--format=%(refname)%00%(objectname)%00%(objecttype)%00%(committerdate:iso-strict)%00%(subject)', 'refs/gitpeek/rebase/'])
+  return output.split('\n').flatMap(line => {
+    const [ref, head, type, date, subject] = line.replace(/\r$/, '').split('\0')
+    return backupPattern.test(ref) && hashPattern.test(head) && type === 'commit' ? [{ ref, head, date, subject }] : []
+  })
+}
+
+export async function compareRebaseBackup(git: GitService, repo: Repository, backup: RebaseBackup): Promise<RebaseBackupComparison> {
+  if (!backupPattern.test(backup.ref) || !hashPattern.test(backup.head)) throw new Error('Rebase 备份引用无效。')
+  const [head, backupHead] = await Promise.all([
+    git.run(repo, ['rev-parse', '--verify', '--end-of-options', 'HEAD^{commit}']).then(value => value.trim()),
+    git.run(repo, ['rev-parse', '--verify', '--end-of-options', `${backup.ref}^{commit}`]).then(value => value.trim()),
+  ])
+  if (!hashPattern.test(head) || backupHead !== backup.head) throw new Error('HEAD 或备份已变化，请重新选择备份。')
+  const [names, stats] = await Promise.all([
+    git.run(repo, ['diff', '--name-status', '-z', '-M', head, backup.head, '--']),
+    git.run(repo, ['diff', '--numstat', '-z', '-M', head, backup.head, '--']),
+  ])
+  const counts = parseNumStat(stats)
+  return { repo, backup, head, files: parseNameStatus(names).map(file => ({ ...file, ...counts.get(file.path) })) }
+}
+
+export async function createRecoveryBranch(git: GitService, comparison: RebaseBackupComparison, name: string): Promise<void> {
+  const { repo, backup, head } = comparison
+  if (!backupPattern.test(backup.ref) || !hashPattern.test(backup.head) || !hashPattern.test(head)) throw new Error('恢复比较快照无效。')
+  if (!name || name.startsWith('-') || /[\0\r\n]/.test(name)) throw new Error('请输入有效的新分支名称。')
+  await guarded(repo, async () => {
+    if ((await git.run(repo, ['check-ref-format', '--branch', name])).trim() !== name) throw new Error('恢复分支名称不能使用分支切换简写。')
+    const [currentHead, currentBackup] = await Promise.all([
+      git.run(repo, ['rev-parse', '--verify', '--end-of-options', 'HEAD^{commit}']),
+      git.run(repo, ['rev-parse', '--verify', '--end-of-options', `${backup.ref}^{commit}`]),
+    ])
+    if (currentHead.trim() !== head || currentBackup.trim() !== backup.head) throw new Error('HEAD 或备份已变化，请先重新比较。')
+    await git.run(repo, ['branch', '--', name, backup.head])
+  })
 }
 
 async function guarded<T>(repo: Repository, operation: () => Promise<T>): Promise<T> {

@@ -1,6 +1,6 @@
 // Run with installed dev dependencies: node tests/git-service.integration.cjs
 const assert = require('node:assert/strict')
-const { execFileSync } = require('node:child_process')
+const { execFile, execFileSync } = require('node:child_process')
 const { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, renameSync, rmSync } = require('node:fs')
 const { tmpdir } = require('node:os')
 const { join } = require('node:path')
@@ -119,7 +119,39 @@ async function main() {
     assert.equal((await service.status(repoB)).files.length, 0)
     assert.notEqual(git(first, 'rev-parse', '--show-toplevel'), git(second, 'rev-parse', '--show-toplevel'))
     assert(logMessages.some((message) => /^\[GitPeek\] git status \(.+\) \d+ms$/.test(message)))
-    console.log('GitService integration check passed (two repos, empty repo, NUL paths, rename, blame).')
+    const aborted = AbortSignal.abort()
+    for (const operation of [
+      () => service.run(repoA, ['status', '--porcelain'], { signal: aborted }),
+      () => service.status(repoA, aborted),
+      () => service.history(repoA, "目录 & 'quote'/改名.txt", 20, undefined, aborted),
+      () => service.commit(repoA, 'HEAD', aborted),
+      () => service.compare(repoA, 'HEAD~1', 'HEAD', aborted),
+    ]) await assert.rejects(operation(), error => error.name === 'AbortError')
+    let child, closed, launches = 0
+    try {
+      delete require.cache[compiled]
+      Module._load = function (request, parent, isMain) {
+        if (request === 'node:child_process') return { execFile: (command, args, options, callback) => {
+          assert.equal(command, 'git'); assert.equal(args[0], '-C'); launches++
+          child = execFile(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], options, callback)
+          closed = new Promise(resolve => child.once('close', resolve))
+          return child
+        } }
+        return originalLoad.call(this, request, parent, isMain)
+      }
+      const controlled = new (require(compiled).GitService)()
+      const controller = new AbortController()
+      const pending = controlled.run(repoA, ['log'], { signal: controller.signal, timeoutMs: 10000 })
+      const rejected = assert.rejects(pending, error => error.name === 'AbortError' && error.code === 'ABORT_ERR', 'active subprocess cancellation remains distinguishable from failure')
+      controller.abort()
+      await rejected
+      await closed
+      assert.equal(child.killed, true, 'AbortSignal terminates the subprocess')
+      assert.throws(() => process.kill(child.pid, 0), 'cancelled subprocess is no longer alive')
+      await assert.rejects(controlled.run(repoA, ['log'], { signal: aborted }), error => error.name === 'AbortError')
+      assert.equal(launches, 1, 'pre-cancelled queries never spawn a subprocess')
+    } finally { Module._load = originalLoad }
+    console.log('GitService integration check passed (two repos, empty repo, NUL paths, rename, blame and subprocess cancellation).')
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

@@ -4,10 +4,11 @@ import * as vscode from 'vscode';
 import type { GitService } from '../git/GitService';
 import type { RepositoryService } from '../git/RepositoryService';
 import type { Repository } from '../git/types';
+import type { registerCommitFeatures } from './commitDetail';
 import { checkoutCommit } from './checkoutCommit';
 import { abortCherryPick, cherryPickCommit, cherryPickInProgress, continueCherryPick } from './cherryPickCommit';
 import {
-  avatarByEmail, createAndSwitchBranch, loadGraph, mergeLocalBranch, normalizeGraphQuery, parseGitHubRemote,
+  avatarByEmail, createAndSwitchBranch, loadCodeSearchFiles, loadCodeSearchLocation, loadGraph, mergeLocalBranch, normalizeGraphQuery, parseGitHubRemote,
   switchLocalBranch, type GraphSnapshot, type GraphQuery,
 } from './commitGraphData';
 
@@ -17,6 +18,7 @@ export function registerCommitGraph(
   repositories: RepositoryService,
   showCommit: (repo: Repository, hash: string) => Promise<void>,
   openRebase?: (repo: Repository, firstHash?: string) => Promise<void>,
+  showDiff?: ReturnType<typeof registerCommitFeatures>['showDiff'],
 ): { refresh(): Promise<void> } {
   let panel: vscode.WebviewPanel | undefined;
   let repo: Repository | undefined;
@@ -25,26 +27,32 @@ export function registerCommitGraph(
   let limit = 100;
   let generation = 0;
   let query: GraphQuery = { kind: 'message', text: '', scope: 'all' };
+  let pending: AbortController | undefined;
+  let selection: AbortController | undefined;
+  const cancel = (): void => { pending?.abort(); selection?.abort(); };
   const avatarCache = new Map<string, { expires: number; avatars: Record<string, string> }>();
 
   const refresh = async (): Promise<void> => {
-    if (!panel || !repo || !ready) return;
+    if (!panel || !repo || !ready || !vscode.workspace.getConfiguration('gitpeek').get<boolean>('enabled', true)) return;
+    cancel();
+    const controller = pending = new AbortController();
     const current = ++generation;
     const target = repo;
+    const targetQuery = { ...query };
     snapshot = undefined;
     void panel.webview.postMessage({ type: 'loading' });
     try {
-      const [data, cherryInProgress] = await Promise.all([loadGraph(git, target, limit, query), cherryPickInProgress(git, target)]);
-      if (current !== generation || !panel || repo?.id !== target.id) return;
+      const [data, cherryInProgress] = await Promise.all([loadGraph(git, target, limit, targetQuery, controller.signal), cherryPickInProgress(git, target, controller.signal)]);
+      if (controller.signal.aborted || current !== generation || !panel || repo?.id !== target.id) return;
       snapshot = data;
-      void panel.webview.postMessage({ type: 'render', data, query, limit, cherryInProgress, repoId: target.id, generation: current });
-      void loadAvatars(target, data.branch).then(avatars => {
-        if (current === generation && panel && repo?.id === target.id) {
+      void panel.webview.postMessage({ type: 'render', data, query: targetQuery, limit, cherryInProgress, repoId: target.id, generation: current });
+      void loadAvatars(target, data.branch, controller.signal).then(avatars => {
+        if (!controller.signal.aborted && current === generation && panel && repo?.id === target.id) {
           void panel.webview.postMessage({ type: 'avatars', avatars });
         }
-      });
+      }).catch(() => { /* Avatars are optional, including when the query is cancelled. */ });
     } catch (error) {
-      if (current === generation && panel) void panel.webview.postMessage({ type: 'error', message: errorText(error) });
+      if (!controller.signal.aborted && current === generation && panel) void panel.webview.postMessage({ type: 'error', message: errorText(error) });
     }
   };
 
@@ -71,8 +79,8 @@ export function registerCommitGraph(
     panel = vscode.window.createWebviewPanel('gitpeek.commitGraph', `GitPeek 提交图 · ${basename(selected.root)}`, vscode.ViewColumn.Active, {
       enableScripts: true, retainContextWhenHidden: true,
     });
-    panel.onDidDispose(() => { panel = undefined; ready = false; generation++; });
-    panel.onDidChangeViewState(() => { if (panel?.visible) void refresh(); });
+    panel.onDidDispose(() => { cancel(); panel = undefined; ready = false; generation++; });
+    panel.onDidChangeViewState(() => { if (panel?.visible) void refresh(); else { cancel(); generation++; } });
     panel.webview.onDidReceiveMessage((message: unknown) => { void handleMessage(message); });
     panel.webview.html = graphHtml();
   };
@@ -89,7 +97,7 @@ export function registerCommitGraph(
         query = normalizeGraphQuery(message);
         limit = 100; await refresh();
       } catch (error) {
-        generation++; snapshot = undefined;
+        cancel(); generation++; snapshot = undefined;
         void panel.webview.postMessage({ type: 'error', message: errorText(error) });
       }
       return;
@@ -102,10 +110,35 @@ export function registerCommitGraph(
       return;
     }
     if (action === 'commit') {
-      const hash = (message as { hash?: unknown }).hash;
+      const target = message as { hash?: unknown; repoId?: unknown; generation?: unknown };
+      if (!requestedAction && (target.repoId !== repo.id || target.generation !== generation)) return;
+      const hash = target.hash;
       if (typeof hash === 'string' && snapshot?.rows.some(row => row.hash === hash)) {
+        selection?.abort();
         void panel.webview.postMessage({ type: 'select', hash, repoId: repo.id, generation });
-        await showCommit(repo, hash);
+        if (query.kind !== 'code' || !query.text || !showDiff) { await showCommit(repo, hash); return; }
+        const controller = selection = new AbortController();
+        const targetRepo = repo, targetGeneration = generation, targetQuery = { ...query };
+        const valid = () => !controller.signal.aborted && Boolean(panel && repo?.id === targetRepo.id && generation === targetGeneration);
+        try {
+          const files = await loadCodeSearchFiles(git, targetRepo, hash, targetQuery, controller.signal);
+          if (!valid()) return;
+          if (!files.length) {
+            await vscode.window.showInformationMessage('GitPeek：此提交没有可核实的代码命中文件，可能是合并差异与首父比较方式不同。');
+            if (valid()) await showCommit(targetRepo, hash);
+            return;
+          }
+          const selected = files.length === 1 ? { file: files[0] } : await vscode.window.showQuickPick(files.map(file => ({
+            label: file.path, description: file.oldPath ? `${file.oldPath} → ${file.path}` : file.status, file,
+          })), { title: `GitPeek：${hash.slice(0, 7)} 的代码命中文件`, placeHolder: '选择命中文件以查看增删位置' });
+          if (!selected || !valid()) return;
+          const { location, reason } = await loadCodeSearchLocation(git, targetRepo, hash, selected.file, targetQuery.text, controller.signal);
+          if (!valid()) return;
+          await showDiff(targetRepo, hash, selected.file.path, undefined, undefined, location);
+          if (reason && valid()) await vscode.window.showInformationMessage(`GitPeek：${reason}`);
+        } catch (error) {
+          if (valid()) await vscode.window.showErrorMessage(`GitPeek：无法定位代码搜索结果：${errorText(error)}`);
+        }
       }
       return;
     }
@@ -221,11 +254,11 @@ export function registerCommitGraph(
     }
   };
 
-  const loadAvatars = async (target: Repository, branch: string): Promise<Record<string, string>> => {
+  const loadAvatars = async (target: Repository, branch: string, signal: AbortSignal): Promise<Record<string, string>> => {
     const key = `${target.id}\0${branch}`;
     const cached = avatarCache.get(key);
     if (cached && cached.expires > Date.now()) return cached.avatars;
-    const remote = await git.run(target, ['remote', 'get-url', 'origin']).catch(() => '');
+    const remote = await git.run(target, ['remote', 'get-url', 'origin'], { signal }).catch(error => { if (signal.aborted) throw error; return ''; });
     const github = parseGitHubRemote(remote);
     if (!github) return {};
     const url = new URL(`https://api.github.com/repos/${github.owner}/${github.repo}/commits`);
@@ -234,7 +267,7 @@ export function registerCommitGraph(
     const request = async (): Promise<Record<string, string>> => {
       const response = await fetch(url, {
         headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'GitPeek' },
-        signal: AbortSignal.timeout(4_000),
+        signal: AbortSignal.any([signal, AbortSignal.timeout(4_000)]),
       });
       return response.ok ? avatarByEmail(await response.json()) : {};
     };
@@ -243,11 +276,17 @@ export function registerCommitGraph(
       avatars = await request();
       if (!Object.keys(avatars).length && branch) { url.searchParams.delete('sha'); avatars = await request(); }
     } catch { /* Keep author initials when GitHub is unavailable. */ }
-    avatarCache.set(key, { expires: Date.now() + 10 * 60_000, avatars });
+    if (!signal.aborted) avatarCache.set(key, { expires: Date.now() + 10 * 60_000, avatars });
     return avatars;
   };
 
   context.subscriptions.push(vscode.commands.registerCommand('gitpeek.showCommitGraph', show));
+  context.subscriptions.push({ dispose: cancel }, vscode.workspace.onDidChangeConfiguration(event => {
+    if (event.affectsConfiguration('gitpeek.enabled') && !vscode.workspace.getConfiguration('gitpeek').get('enabled', true)) {
+      cancel(); generation++; snapshot = undefined;
+      void panel?.webview.postMessage({ type: 'error', message: 'GitPeek 已禁用。' });
+    }
+  }));
   for (const action of ['commit', 'copy', 'checkout', 'cherryPick', 'rebase', 'selectCompare', 'compareSelected']) {
     context.subscriptions.push(vscode.commands.registerCommand(`gitpeek.internal.graph.${action}`, (value: unknown) => {
       if (!value || typeof value !== 'object') return;
@@ -379,7 +418,7 @@ function draw(){
   if(!count)rows.append(label('empty',filtered()||query?.scope==='current'?'没有匹配的提交，请修改搜索条件或清除搜索。':'还没有提交，完成首次提交后即可查看历史。'));
   more.hidden=!data.hasMore;
 }
-document.addEventListener('click',event=>{const action=event.target.closest('[data-action]');if(action){if(action.dataset.action==='clearSearch'){searchText.value='';searchPath.value='';searchSince.value='';searchUntil.value='';submitSearch()}else vscode.postMessage({type:action.dataset.action,repoId,generation});return}const commitActions=event.target.closest('[data-actions-hash]');if(commitActions){vscode.postMessage({type:'actions',hash:commitActions.dataset.actionsHash,repoId,generation});return}const commit=event.target.closest('[data-hash]');if(commit){selectedHash=commit.dataset.hash;vscode.postMessage({type:'commit',hash:commit.dataset.hash});draw()}});
+document.addEventListener('click',event=>{const action=event.target.closest('[data-action]');if(action){if(action.dataset.action==='clearSearch'){searchText.value='';searchPath.value='';searchSince.value='';searchUntil.value='';submitSearch()}else vscode.postMessage({type:action.dataset.action,repoId,generation});return}const commitActions=event.target.closest('[data-actions-hash]');if(commitActions){vscode.postMessage({type:'actions',hash:commitActions.dataset.actionsHash,repoId,generation});return}const commit=event.target.closest('[data-hash]');if(commit){selectedHash=commit.dataset.hash;vscode.postMessage({type:'commit',hash:commit.dataset.hash,repoId,generation});draw()}});
 window.addEventListener('message',event=>{const message=event.data;if(message.type==='loading'){data=undefined;rows.replaceChildren();more.hidden=true;status.textContent='正在加载…'}else if(message.type==='error'){data=undefined;rows.replaceChildren(label('empty',message.message));more.hidden=true;status.textContent=message.message;}else if(message.type==='render'){const switchedRepo=repoId!==message.repoId;data=message.data;query=message.query;repoId=message.repoId;generation=message.generation;if(query&&(!searchDirty||switchedRepo)){searchText.value=query.text;searchKind.value=query.kind;searchScope.value=query.scope;searchPath.value=query.path||'';searchSince.value=query.since||'';searchUntil.value=query.until||'';searchDirty=false}updateSearchControls();for(const action of ['cherryContinue','cherryAbort'])document.querySelector('[data-action="'+action+'"]').hidden=!message.cherryInProgress;draw()}else if(message.type==='select'&&message.repoId===repoId&&message.generation===generation){selectedHash=message.hash;draw();[...rows.children].find(row=>row.dataset.hash===selectedHash)?.scrollIntoView?.({block:'nearest'})}else if(message.type==='avatars'){avatars=message.avatars||{};draw()}});
 vscode.postMessage({type:'ready'});
 </script></body></html>`;

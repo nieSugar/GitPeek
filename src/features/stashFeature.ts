@@ -112,14 +112,17 @@ export function registerStashFeatures(context: vscode.ExtensionContext, git: Git
       await vscode.window.showInformationMessage(`GitPeek：${entry.ref} 没有可显示的文件改动。`);
       return;
     }
-    await vscode.window.showQuickPick(preview.files.map(file => ({
+    const selected = await vscode.window.showQuickPick(preview.files.map(file => ({
       label: `${file.status} ${file.path}`,
-      description: `+${file.additions ?? 0} −${file.deletions ?? 0}`,
+      description: `${file.binary ? '二进制文件' : `+${file.additions ?? 0} −${file.deletions ?? 0}`}${file.untracked ? ' · 未跟踪文件' : ''}`,
+      detail: file.oldPath ? `${file.oldPath} → ${file.path}` : undefined,
+      file,
     })), {
       title: `GitPeek：${entry.ref} · ${entry.subject}`,
-      placeHolder: `${preview.files.length} 个文件 · +${preview.additions} −${preview.deletions}`,
+      placeHolder: `${preview.files.length} 个文件 · +${preview.additions} −${preview.deletions} · 选择文件查看只读差异`,
       matchOnDescription: true,
     });
+    if (selected) await vscode.commands.executeCommand('gitpeek.internal.compare.stash', repo, entry, selected.file.path, selected.file.untracked);
   };
 
   context.subscriptions.push(vscode.commands.registerCommand('gitpeek.stash', show));

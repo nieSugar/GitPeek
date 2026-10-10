@@ -412,6 +412,65 @@ async function main() {
       assert.equal(await read(root), undefined);
     });
 
+    await check('recovery compares immutable trees and only creates a branch, preserving dirty files and index', async () => {
+      const { root, first } = fixture('recovery branch');
+      const plan = await load(root, first);
+      const steps = pickSteps(plan); steps[1].action = 'drop';
+      const result = await run(plan, steps);
+      const backups = await api.listRebaseBackups(service, repository(root));
+      const backup = backups.find(entry => entry.ref === result.backupRef);
+      assert.equal(backup.head, plan.head);
+      const comparison = await api.compareRebaseBackup(service, repository(root), backup);
+      assert.deepEqual(comparison.files.map(file => [file.status, file.path]), [['A', 'second.txt']]);
+      writeFileSync(join(root, 'first.txt'), 'staged change\n', 'utf8');
+      git(root, 'add', '--', 'first.txt');
+      writeFileSync(join(root, 'first.txt'), 'unstaged change\n', 'utf8');
+      writeFileSync(join(root, 'untracked.txt'), 'keep me\n', 'utf8');
+      const branch = git(root, 'branch', '--show-current'), beforeHead = head(root);
+      const beforeStatus = git(root, 'status', '--porcelain'), beforeIndex = git(root, 'write-tree');
+      await api.createRecoveryBranch(service, comparison, 'recovery/原历史');
+      assert.equal(git(root, 'rev-parse', 'recovery/原历史'), plan.head);
+      assert.equal(git(root, 'branch', '--show-current'), branch);
+      assert.equal(head(root), beforeHead); assert.equal(git(root, 'write-tree'), beforeIndex);
+      assert.equal(git(root, 'status', '--porcelain'), beforeStatus);
+      assert.equal(readFileSync(join(root, 'first.txt'), 'utf8'), 'unstaged change\n');
+      assert.equal(readFileSync(join(root, 'untracked.txt'), 'utf8'), 'keep me\n');
+      await assert.rejects(api.createRecoveryBranch(service, comparison, 'recovery/原历史'), /already exists|已经存在/);
+      await assert.rejects(api.createRecoveryBranch(service, comparison, '--force'));
+      git(root, 'update-ref', result.backupRef, comparison.head);
+      await assert.rejects(api.createRecoveryBranch(service, comparison, 'recovery/stale'), /已变化/);
+      assert.equal(git(root, 'status', '--porcelain'), beforeStatus);
+    });
+
+    await check('current conflict operations and literal conflict paths are visible without taking ownership', async () => {
+      const { root, plan } = await conflictFixture('operation state');
+      const rebase = await api.readGitOperation(service, repository(root));
+      assert.equal(rebase.kind, 'rebase'); assert.deepEqual(rebase.conflicts, ['shared.txt']);
+      assert.ok(rebase.rebase.backupRef);
+      await abort(root);
+      const base = head(root);
+      git(root, 'switch', '-c', 'side');
+      commitFile(root, '冲突 [x].txt', 'side\n', 'side conflict');
+      const side = head(root);
+      git(root, 'switch', 'main');
+      commitFile(root, '冲突 [x].txt', 'main\n', 'main conflict');
+      try { git(root, 'merge', 'side') } catch {}
+      const merge = await api.readGitOperation(service, repository(root));
+      assert.equal(merge.kind, 'merge'); assert.deepEqual(merge.conflicts, ['冲突 [x].txt']);
+      assert.equal(merge.rebase, undefined);
+      const before = head(root);
+      await assert.rejects(resume(root)); await assert.rejects(abort(root));
+      assert.equal(head(root), before);
+      git(root, 'merge', '--abort');
+      try { git(root, 'cherry-pick', side) } catch {}
+      const cherry = await api.readGitOperation(service, repository(root));
+      assert.equal(cherry.kind, 'cherry-pick'); assert.deepEqual(cherry.conflicts, ['冲突 [x].txt']);
+      assert.equal(cherry.rebase, undefined);
+      git(root, 'cherry-pick', '--abort');
+      assert.equal(await api.readGitOperation(service, repository(root)), undefined);
+      assert.ok(base && plan.head);
+    });
+
     console.log('Interactive rebase integration checks passed.');
   } finally {
     const child = relative(tmpdir(), tempRoot);

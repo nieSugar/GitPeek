@@ -27,7 +27,8 @@
     "watch": "node esbuild.js --watch",
     "check": "tsc --noEmit",
     "benchmark": "node scripts/benchmark.cjs",
-    "test": "node --test tests/git-service.integration.cjs tests/blame.test.cjs tests/virtualEditor.test.cjs tests/fileHistory.test.mjs tests/commitGraph.integration.cjs tests/commitGraphView.test.cjs tests/checkoutCommit.integration.cjs tests/cherryPickCommit.integration.cjs tests/stashList.integration.cjs tests/stashSave.integration.cjs tests/stashApply.integration.cjs tests/stashDrop.integration.cjs tests/commit-detail.integration.cjs tests/branchCompare.integration.cjs tests/selectionOrigins.integration.cjs tests/reviewChanges.integration.cjs tests/smartCommit.test.mjs tests/contextMenus.test.cjs tests/workflows.integration.cjs tests/detailsCompare.regressions.cjs tests/historyStage.regressions.cjs tests/search-regressions.test.cjs tests/batchStage.integration.cjs tests/batchStageView.test.cjs tests/fileBlame.test.cjs tests/revisionNavigation.test.cjs tests/selectionSnapshot.integration.cjs tests/interactiveRebase.integration.cjs tests/rebaseEditor.test.cjs tests/comparisonLayout.test.cjs tests/historyReferences.integration.cjs tests/historyInvestigation.integration.cjs tests/historyLifecycle.test.cjs",
+    "benchmark:large": "node scripts/benchmark-large.cjs",
+    "test": "node --test tests/git-service.integration.cjs tests/blame.test.cjs tests/virtualEditor.test.cjs tests/fileHistory.test.mjs tests/commitGraph.integration.cjs tests/commitGraphView.test.cjs tests/checkoutCommit.integration.cjs tests/cherryPickCommit.integration.cjs tests/stashList.integration.cjs tests/stashSave.integration.cjs tests/stashApply.integration.cjs tests/stashDrop.integration.cjs tests/commit-detail.integration.cjs tests/branchCompare.integration.cjs tests/selectionOrigins.integration.cjs tests/reviewChanges.integration.cjs tests/smartCommit.test.mjs tests/contextMenus.test.cjs tests/workflows.integration.cjs tests/detailsCompare.regressions.cjs tests/historyStage.regressions.cjs tests/search-regressions.test.cjs tests/batchStage.integration.cjs tests/batchStageView.test.cjs tests/fileBlame.test.cjs tests/revisionNavigation.test.cjs tests/selectionSnapshot.integration.cjs tests/interactiveRebase.integration.cjs tests/rebaseEditor.test.cjs tests/comparisonLayout.test.cjs tests/historyReferences.integration.cjs tests/historyInvestigation.integration.cjs tests/historyLifecycle.test.cjs tests/stashSnapshots.integration.cjs",
     "package": "npm run check && npm run compile && vsce package --no-dependencies"
   },
   "devDependencies": {
@@ -82,6 +83,29 @@
       {
         "command": "gitpeek.showBranchChanges",
         "title": "GitPeek: 查看分支变更"
+      },
+      {
+        "command": "gitpeek.chooseBaseBranch",
+        "title": "GitPeek: 选择比较基准",
+        "enablement": "config.gitpeek.enabled",
+        "icon": "$(git-compare)"
+      },
+      {
+        "command": "gitpeek.showConflicts",
+        "title": "GitPeek: 查看当前操作与冲突",
+        "enablement": "config.gitpeek.enabled",
+        "icon": "$(warning)"
+      },
+      {
+        "command": "gitpeek.rebaseBackups",
+        "title": "GitPeek: 比较与恢复 Rebase 备份",
+        "enablement": "config.gitpeek.enabled"
+      },
+      {
+        "command": "gitpeek.internal.compare.stash",
+        "title": "打开 Stash 文件差异",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled"
       },
       {
         "command": "gitpeek.reviewChanges",
@@ -352,6 +376,21 @@
     "menus": {
       "view/title": [
         {
+          "command": "gitpeek.chooseBaseBranch",
+          "when": "config.gitpeek.enabled && view == gitpeek.branchChanges",
+          "group": "navigation@1"
+        },
+        {
+          "command": "gitpeek.showConflicts",
+          "when": "config.gitpeek.enabled && view == gitpeek.repository",
+          "group": "2_git@1"
+        },
+        {
+          "command": "gitpeek.rebaseBackups",
+          "when": "config.gitpeek.enabled && view == gitpeek.repository",
+          "group": "2_git@2"
+        },
+        {
           "command": "gitpeek.showCommitGraph",
           "when": "view == gitpeek.repository",
           "group": "navigation@1"
@@ -457,6 +496,10 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "gitpeek.internal.compare.stash",
+          "when": "false"
+        },
         {
           "command": "gitpeek.interactiveRebase",
           "when": "config.gitpeek.enabled"

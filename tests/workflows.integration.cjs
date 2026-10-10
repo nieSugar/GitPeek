@@ -118,10 +118,11 @@ async function main() {
     await commands.get('gitpeek.internal.compare.compareSelected')(target(tip));
     assert.match(info.at(-1), /先右键/);
     const dirtyPath = path.join(repo.root, file);
-    vscode.workspace.textDocuments = [{ uri: vscode.Uri.file(process.platform === 'win32' ? dirtyPath.toLowerCase() : dirtyPath), isDirty: true }];
+    vscode.workspace.textDocuments = [{ uri: vscode.Uri.file(process.platform === 'win32' ? dirtyPath.toLowerCase() : dirtyPath), isDirty: true, getText: () => 'unsaved editor content\n' }];
     const beforeDirty = executed.length;
     await commands.get('gitpeek.internal.compare.working')({ commitTarget: { repo, hash: root, file: old, workspacePath: file } });
-    assert.equal(executed.length, beforeDirty); assert.match(info.at(-1), /未保存/);
+    assert.equal(executed.length, beforeDirty + 1); assert.match(executed.at(-1)[3], /编辑器快照（未保存）/);
+    assert.equal(await providers.get('gitpeek-compare').provideTextDocumentContent(executed.at(-1)[2]), 'unsaved editor content\n');
     vscode.workspace.textDocuments = [];
 
     const state = async (r, section, file) => (await loadReviewSnapshot(service, r)).groups.find(g => g.section === section).files.find(f => f.path === file);

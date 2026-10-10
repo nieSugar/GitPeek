@@ -19,23 +19,23 @@ export interface CommitContentRef {
   side?: 'before' | 'after';
 }
 
-export async function readCommitContent(git: GitService, repo: Repository, ref: CommitContentRef): Promise<string> {
+export async function readCommitContent(git: GitService, repo: Repository, ref: CommitContentRef, signal?: AbortSignal): Promise<string> {
   if (ref.empty) return '';
   if (ref.binary) return binaryLabel(ref.file, ref.side ?? 'requested', ref.ref);
-  return git.run(repo, ['show', `${ref.ref}:${ref.file}`]);
+  return git.run(repo, ['show', `${ref.ref}:${ref.file}`], { signal });
 }
 
-export async function loadCommitDetail(git: GitService, repo: Repository, ref: string): Promise<CommitDetail> {
-  const hash = (await git.run(repo, ['rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`])).trim();
+export async function loadCommitDetail(git: GitService, repo: Repository, ref: string, signal?: AbortSignal): Promise<CommitDetail> {
+  const hash = (await git.run(repo, ['rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`], { signal })).trim();
   if (!/^[0-9a-f]{40,64}$/i.test(hash)) throw new Error(`Git 返回了无效的提交哈希：${ref}`);
-  const detail = await git.commit(repo, hash);
-  const [parentsLine] = (await git.run(repo, ['rev-list', '--parents', '-n', '1', hash])).trim().split('\n');
+  const detail = await git.commit(repo, hash, signal);
+  const [parentsLine] = (await git.run(repo, ['rev-list', '--parents', '-n', '1', hash], { signal })).trim().split('\n');
   const [, firstParent] = (parentsLine ?? '').split(' ');
   if (!firstParent) return { ...detail, hash };
 
   const [names, stats] = await Promise.all([
-    git.run(repo, ['diff', '--name-status', '-z', '-M', firstParent, hash, '--']),
-    git.run(repo, ['diff', '--numstat', '-z', '-M', firstParent, hash, '--']),
+    git.run(repo, ['diff', '--name-status', '-z', '-M', firstParent, hash, '--'], { signal }),
+    git.run(repo, ['diff', '--numstat', '-z', '-M', firstParent, hash, '--'], { signal }),
   ]);
   const numstats = parseNumStat(stats);
   const files = parseNameStatus(names).map((file) => ({ ...file, ...(numstats.get(file.path) ?? {}) }));
@@ -48,16 +48,16 @@ export async function loadCommitDetail(git: GitService, repo: Repository, ref: s
   };
 }
 
-export async function resolveWorkspacePaths(git: GitService, repo: Repository, hash: string, files: readonly FileChange[]): Promise<Map<string, string>> {
+export async function resolveWorkspacePaths(git: GitService, repo: Repository, hash: string, files: readonly FileChange[], signal?: AbortSignal): Promise<Map<string, string>> {
   const paths = new Map<string, string>();
   try {
-    const head = (await git.run(repo, ['rev-parse', '--verify', 'HEAD'])).trim();
-    const chain = (await git.run(repo, ['rev-list', '--first-parent', head])).trim().split('\n');
+    const head = (await git.run(repo, ['rev-parse', '--verify', 'HEAD'], { signal })).trim();
+    const chain = (await git.run(repo, ['rev-list', '--first-parent', head], { signal })).trim().split('\n');
     if (!chain.includes(hash)) return paths;
-    const initial = new Set((await git.run(repo, ['ls-tree', '-r', '--name-only', '-z', hash])).split('\0'));
+    const initial = new Set((await git.run(repo, ['ls-tree', '-r', '--name-only', '-z', hash], { signal })).split('\0'));
     for (const file of files) if (initial.has(file.path)) paths.set(file.path, file.path);
     if (head !== hash) {
-      const changes = await git.run(repo, ['log', '--first-parent', '--reverse', '--diff-merges=first-parent', '--format=%x00%x00', '--name-status', '-z', '-M', `${hash}..${head}`, '--']);
+      const changes = await git.run(repo, ['log', '--first-parent', '--reverse', '--diff-merges=first-parent', '--format=%x00%x00', '--name-status', '-z', '-M', `${hash}..${head}`, '--'], { signal });
       // NUL-delimited commit boundaries keep simultaneous renames from being followed twice.
       for (const record of changes.split('\0\0\0')) {
         const changesInCommit = parseNameStatus(record.replace(/^[\0\n]+/, ''));
@@ -68,10 +68,13 @@ export async function resolveWorkspacePaths(git: GitService, repo: Repository, h
         }
       }
     }
-    const current = new Set((await git.run(repo, ['ls-tree', '-r', '--name-only', '-z', head])).split('\0'));
+    const current = new Set((await git.run(repo, ['ls-tree', '-r', '--name-only', '-z', head], { signal })).split('\0'));
     for (const [original, path] of paths) if (!current.has(path)) paths.delete(original);
     return paths;
-  } catch { return new Map(); } // A mapping that cannot be verified must not open a reused historical name.
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return new Map(); // A mapping that cannot be verified must not open a reused historical name.
+  }
 }
 
 export async function loadCommitDiffContents(
@@ -79,20 +82,21 @@ export async function loadCommitDiffContents(
   repo: Repository,
   commit: CommitDetail,
   filePath: string,
+  signal?: AbortSignal,
 ): Promise<CommitDiffContents> {
   const file = commit.files.find((item) => item.path === filePath || item.oldPath === filePath);
   if (!file) throw new Error(`文件不属于提交 ${commit.hash}：${filePath}`);
-  const [parentsLine] = (await git.run(repo, ['rev-list', '--parents', '-n', '1', commit.hash])).trim().split('\n');
+  const [parentsLine] = (await git.run(repo, ['rev-list', '--parents', '-n', '1', commit.hash], { signal })).trim().split('\n');
   const [, parent] = (parentsLine ?? '').split(' ');
   const stats = parent
-    ? await git.run(repo, ['diff', '--numstat', '-z', '-M', parent, commit.hash, '--', ...literalPaths(file)])
-    : await git.run(repo, ['diff-tree', '--root', '--no-commit-id', '-r', '--numstat', '-z', '-M', commit.hash, '--', `:(literal)${file.path}`]);
+    ? await git.run(repo, ['diff', '--numstat', '-z', '-M', parent, commit.hash, '--', ...literalPaths(file)], { signal })
+    : await git.run(repo, ['diff-tree', '--root', '--no-commit-id', '-r', '--numstat', '-z', '-M', commit.hash, '--', `:(literal)${file.path}`], { signal });
   const binary = isBinaryNumstat(stats, file.path);
   const beforePath = file.status === 'R' ? file.oldPath : file.path;
   const isAdded = file.status === 'A';
   const isDeleted = file.status === 'D';
-  const oldContent = isAdded ? '' : binary ? binaryLabel(file.oldPath ?? file.path, 'before', parent) : await git.run(repo, ['show', `${parent}:${beforePath}`]);
-  const newContent = isDeleted ? '' : binary ? binaryLabel(file.path, 'after', commit.hash) : await git.run(repo, ['show', `${commit.hash}:${file.path}`]);
+  const oldContent = isAdded ? '' : binary ? binaryLabel(file.oldPath ?? file.path, 'before', parent) : await git.run(repo, ['show', `${parent}:${beforePath}`], { signal });
+  const newContent = isDeleted ? '' : binary ? binaryLabel(file.path, 'after', commit.hash) : await git.run(repo, ['show', `${commit.hash}:${file.path}`], { signal });
   return { commit, file, parent, oldContent, newContent, binary };
 }
 

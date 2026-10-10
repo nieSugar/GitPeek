@@ -28,7 +28,7 @@ async function main() {
       entryPoints: [path.join(__dirname, '../src/features/commitGraphData.ts'), path.join(__dirname, '../src/git/GitService.ts')],
       bundle: true, platform: 'node', format: 'cjs', outdir: temp, outExtension: { '.js': '.cjs' },
     });
-    const { loadGraph, normalizeGraphQuery } = require(path.join(temp, 'features/commitGraphData.cjs'));
+    const { loadGraph, normalizeGraphQuery, loadCodeSearchFiles, loadCodeSearchLocation } = require(path.join(temp, 'features/commitGraphData.cjs'));
     const service = new (require(path.join(temp, 'git/GitService.cjs')).GitService)();
     const hashes = result => result.rows.filter(row => row.hash).map(row => row.hash);
     for (const [kind, text] of [['message', '隐藏消息 [.*]'], ['author', 'unique side'], ['hash', hidden.slice(0, 9)]]) {
@@ -68,6 +68,18 @@ async function main() {
     assert.deepEqual(hashes(await loadGraph(service, repo, 100, { ...codeQuery, text: literal.toUpperCase() })), []);
     assert.deepEqual(hashes(await loadGraph(service, repo, 100, { ...codeQuery, text: '中文 .*' })), [], 'code search does not enable regular expressions');
     assert.deepEqual(hashes(await loadGraph(service, repo, 100, { ...codeQuery, text: '中文 [.*] Needle  ' })), [], 'code search retains meaningful spaces');
+    const addedFiles = await loadCodeSearchFiles(service, repo, added, codeQuery);
+    assert.deepEqual(addedFiles.map(file => file.path), [targetPath]);
+    assert.deepEqual((await loadCodeSearchLocation(service, repo, added, addedFiles[0], literal)).location,
+      { side: 'right', line: 2, text: literal }, 'addition points to the actual modified line');
+    const removedFiles = await loadCodeSearchFiles(service, repo, removed, codeQuery);
+    assert.deepEqual((await loadCodeSearchLocation(service, repo, removed, removedFiles[0], literal)).location,
+      { side: 'left', line: 1, text: literal }, 'deletion points to the original line before the commit');
+    assert.deepEqual(await loadCodeSearchFiles(service, repo, moved, codeQuery), [], 'moving an unchanged occurrence count does not produce a false matching file');
+    const rootQuery = { kind: 'code', text: 'base', scope: 'all' };
+    const rootFiles = await loadCodeSearchFiles(service, repo, root, rootQuery);
+    assert.deepEqual((await loadCodeSearchLocation(service, repo, root, rootFiles[0], rootQuery.text)).location,
+      { side: 'right', line: 1, text: 'base' }, 'root-commit hits compare with the empty file');
     const pathQuery = { kind: 'message', text: '', scope: 'current', path: targetPath };
     assert.deepEqual(hashes(await loadGraph(service, repo, 100, pathQuery)), [after, removed, moved, added], 'path brackets stay literal');
     assert.deepEqual(hashes(await loadGraph(service, repo, 100, { ...pathQuery, path: 'src/x.txt' })), [moved]);
@@ -100,7 +112,50 @@ async function main() {
     git('switch', 'main');
     assert.deepEqual(hashes(await loadGraph(service, repo, 100, { kind: 'code', text: 'SideOnlyNeedle', scope: 'all', path: 'side.txt' })), [sideCode]);
     assert.deepEqual(hashes(await loadGraph(service, repo, 100, { kind: 'code', text: 'SideOnlyNeedle', scope: 'current', path: 'side.txt' })), []);
-    console.log('Search regressions passed (Hash, literal code/path, inclusive local dates, unordered dates, invalid inputs, scopes and pagination).');
+    const needle = 'HitAtLocation';
+    const oldPath = 'src/旧 [file].txt', newPath = 'src/新 [file].txt';
+    const body = Array.from({ length: 40 }, (_, index) => `unchanged ${index}`).join('\n') + '\n';
+    fs.writeFileSync(path.join(repo.root, oldPath), body + needle + '\n', 'utf8');
+    git('add', '--all'); git('commit', '-m', 'rename source');
+    git('mv', '--', oldPath, newPath);
+    fs.appendFileSync(path.join(repo.root, newPath), needle + '\n', 'utf8');
+    fs.writeFileSync(path.join(repo.root, 'another-hit.txt'), `first\n${needle}\n`, 'utf8');
+    fs.writeFileSync(path.join(repo.root, 'unrelated.txt'), 'no matching text\n', 'utf8');
+    git('add', '--all'); git('commit', '-m', 'multiple files with a rename');
+    const renamedHash = git('rev-parse', 'HEAD');
+    const hitQuery = { kind: 'code', text: needle, scope: 'all' };
+    const hitFiles = await loadCodeSearchFiles(service, repo, renamedHash, hitQuery);
+    assert.deepEqual(hitFiles.map(file => file.path).sort(), ['another-hit.txt', newPath].sort(), 'only Git -S matching files are offered');
+    const renamedFile = hitFiles.find(file => file.path === newPath);
+    assert.equal(renamedFile.status, 'R'); assert.equal(renamedFile.oldPath, oldPath);
+    assert.deepEqual((await loadCodeSearchLocation(service, repo, renamedHash, renamedFile, needle)).location,
+      { side: 'right', line: 42, text: needle }, 'renames retain the old path while locating the added occurrence');
+    assert.deepEqual((await loadCodeSearchFiles(service, repo, renamedHash, { ...hitQuery, path: 'src' })).map(file => file.path), [newPath], 'hit files retain the active literal path filter');
+    fs.writeFileSync(path.join(repo.root, 'binary.bin'), Buffer.concat([Buffer.from([0]), Buffer.from(needle), Buffer.from([0])]));
+    fs.writeFileSync(path.join(repo.root, 'multiline.txt'), 'first\nsecond\n', 'utf8');
+    fs.writeFileSync(path.join(repo.root, 'edge.txt'), 'context\nold\n', 'utf8');
+    git('add', '--all'); git('commit', '-m', 'binary and multiline code');
+    const specialHash = git('rev-parse', 'HEAD');
+    const binaryFile = (await loadCodeSearchFiles(service, repo, specialHash, hitQuery)).find(file => file.path === 'binary.bin');
+    assert.ok(binaryFile, 'binary pickaxe hits retain the Git search semantics');
+    assert.match((await loadCodeSearchLocation(service, repo, specialHash, binaryFile, needle)).reason, /二进制/);
+    const multilineQuery = { ...hitQuery, text: 'first\nsecond' };
+    const [multilineFile] = await loadCodeSearchFiles(service, repo, specialHash, multilineQuery);
+    assert.deepEqual((await loadCodeSearchLocation(service, repo, specialHash, multilineFile, multilineQuery.text)).location,
+      { side: 'right', line: 1, text: 'first' }, 'contiguous multiline literal hits can be verified');
+    fs.writeFileSync(path.join(repo.root, 'edge.txt'), 'context\nnew\n', 'utf8');
+    git('add', '--all'); git('commit', '-m', 'literal spans an unchanged line');
+    const edgeHash = git('rev-parse', 'HEAD'), edgeQuery = { ...hitQuery, text: 'context\nnew' };
+    const [edgeFile] = await loadCodeSearchFiles(service, repo, edgeHash, edgeQuery);
+    const unlocated = await loadCodeSearchLocation(service, repo, edgeHash, edgeFile, edgeQuery.text);
+    assert.equal(unlocated.location, undefined); assert.match(unlocated.reason, /可核实/);
+    const cancelled = AbortSignal.abort();
+    for (const run of [
+      () => loadGraph(service, repo, 100, hitQuery, cancelled),
+      () => loadCodeSearchFiles(service, repo, renamedHash, hitQuery, cancelled),
+      () => loadCodeSearchLocation(service, repo, renamedHash, renamedFile, needle, cancelled),
+    ]) await assert.rejects(run(), error => error.name === 'AbortError', 'cancelled search queries retain AbortError');
+    console.log('Search regressions passed (literal code/path, dates, scopes, pagination, exact Diff hits, rename, binary, multiline and cancellation).');
   } finally {
     const resolved = path.resolve(temp);
     if (!resolved.startsWith(path.resolve(os.tmpdir()) + path.sep)) throw new Error('Search check escaped temp directory');

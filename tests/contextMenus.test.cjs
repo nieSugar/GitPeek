@@ -257,7 +257,7 @@ async function main() {
       assert.ok(commands.has(command), `menu command is registered: ${command}`);
       assert.ok(contributes.menus.commandPalette.some(item => item.command === command && item.when === 'false'));
     }
-    assert.equal(contributes.commands.length - menuCommands.length, 17, 'public investigation commands are contributed');
+    assert.equal(contributes.commands.length - menuCommands.length, 20, 'public investigation commands are contributed');
     assert.equal(contributes.menus['webview/context'].length, 7);
     assert.equal(contributes.commands.find(item => item.command === 'gitpeek.refresh').icon, '$(refresh)');
     assert.ok(contributes.menus['view/title'].some(item => item.command === 'gitpeek.refresh' && item.group.startsWith('navigation')));

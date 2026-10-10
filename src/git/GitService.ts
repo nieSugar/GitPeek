@@ -8,14 +8,15 @@ const MAX_BUFFER = 16 * 1024 * 1024
 export class GitService {
   constructor(private readonly log?: (message: string) => void) {}
 
-  async run(repo: Repository | string, args: string[], options: { timeoutMs?: number; input?: string; env?: NodeJS.ProcessEnv } = {}): Promise<string> {
+  async run(repo: Repository | string, args: string[], options: { timeoutMs?: number; input?: string; env?: NodeJS.ProcessEnv; signal?: AbortSignal } = {}): Promise<string> {
     const root = typeof repo === 'string' ? repo : repo.root
     const startedAt = Date.now()
     try {
+      options.signal?.throwIfAborted()
       return await new Promise<string>((resolve, reject) => {
         const child = execFile('git', ['-C', root, ...args], {
           encoding: 'utf8', timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS, maxBuffer: MAX_BUFFER,
-          windowsHide: true, env: options.env ? { ...process.env, ...options.env } : process.env,
+          windowsHide: true, env: options.env ? { ...process.env, ...options.env } : process.env, signal: options.signal,
         }, (error, stdout, stderr) => error ? reject(Object.assign(error, { stdout, stderr })) : resolve(stdout))
         child.stdin?.on('error', error => {
           // Git may reject an argument before consuming stdin; preserve its diagnostic in the callback.
@@ -24,6 +25,7 @@ export class GitService {
         child.stdin?.end(options.input ?? '', 'utf8')
       })
     } catch (cause) {
+      if (options.signal?.aborted || (cause as Error).name === 'AbortError') throw cause
       const error = cause as NodeJS.ErrnoException & { stderr?: string; killed?: boolean; signal?: string }
       const detail = error.killed ? 'timed out' : error.code === 'ENOENT' ? 'git executable not found' : (error.stderr?.trim() || error.message)
       throw new Error(`Git 命令 ${args[0] ?? '未知命令'} 在“${root}”执行失败：${detail}`, { cause })
@@ -32,8 +34,8 @@ export class GitService {
     }
   }
 
-  async status(repo: Repository): Promise<GitStatus> {
-    return parseStatus(await this.run(repo, ['status', '--porcelain=v2', '-z', '--branch']))
+  async status(repo: Repository, signal?: AbortSignal): Promise<GitStatus> {
+    return parseStatus(await this.run(repo, ['status', '--porcelain=v2', '-z', '--branch'], { signal }))
   }
 
   async userEmail(repo: Repository): Promise<string | undefined> {
@@ -54,16 +56,16 @@ export class GitService {
     return parseBlame(await this.run(repo, ['-c', 'core.quotePath=false', 'blame', '--line-porcelain', '--contents', '-', '--', file], { input: contents, timeoutMs: 10_000 }))
   }
 
-  async history(repo: Repository, file: string, limit = 20, head?: string): Promise<FileHistoryCommit[]> {
+  async history(repo: Repository, file: string, limit = 20, head?: string, signal?: AbortSignal): Promise<FileHistoryCommit[]> {
     if (head !== undefined && !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(head)) throw new Error('文件历史的提交快照无效。')
-    return parseFileHistory(await this.run(repo, ['log', '--follow', '--name-only', '-z', `--max-count=${Math.max(1, Math.floor(limit))}`, '--date=iso-strict', '--pretty=format:%H%x1f%an%x1f%ae%x1f%ad%x1f%s%x00', ...(head ? [head] : []), '--', `:(literal)${file}`]))
+    return parseFileHistory(await this.run(repo, ['log', '--follow', '--name-only', '-z', `--max-count=${Math.max(1, Math.floor(limit))}`, '--date=iso-strict', '--pretty=format:%H%x1f%an%x1f%ae%x1f%ad%x1f%s%x00', ...(head ? [head] : []), '--', `:(literal)${file}`], { signal }))
   }
 
-  async commit(repo: Repository, hash: string): Promise<CommitDetail> {
+  async commit(repo: Repository, hash: string, signal?: AbortSignal): Promise<CommitDetail> {
     const [meta, names, stats] = await Promise.all([
-      this.run(repo, ['show', '-s', '--format=%H%x1f%an%x1f%ae%x1f%aI%x1f%s', hash]),
-      this.run(repo, ['diff-tree', '--root', '--no-commit-id', '-r', '-M', '--name-status', '-z', hash]),
-      this.run(repo, ['show', '--format=', '--numstat', '-z', '-M', hash]),
+      this.run(repo, ['show', '-s', '--format=%H%x1f%an%x1f%ae%x1f%aI%x1f%s', hash], { signal }),
+      this.run(repo, ['diff-tree', '--root', '--no-commit-id', '-r', '-M', '--name-status', '-z', hash], { signal }),
+      this.run(repo, ['show', '--format=', '--numstat', '-z', '-M', hash], { signal }),
     ])
     const [info] = parseLog(`${meta.replace(/\n?$/, '\0')}`)
     if (!info) throw new Error(`Could not parse commit ${hash}`)
@@ -72,12 +74,12 @@ export class GitService {
     return { ...info, files, additions: files.reduce((sum, file) => sum + (file.additions ?? 0), 0), deletions: files.reduce((sum, file) => sum + (file.deletions ?? 0), 0) }
   }
 
-  async compare(repo: Repository, base: string, head = 'HEAD'): Promise<BranchComparison> {
+  async compare(repo: Repository, base: string, head = 'HEAD', signal?: AbortSignal): Promise<BranchComparison> {
     const [counts, commits, names, stats] = await Promise.all([
-      this.run(repo, ['rev-list', '--left-right', '--count', `${base}...${head}`]),
-      this.run(repo, ['log', '-z', '--date=iso-strict', '--pretty=format:%H%x1f%an%x1f%ae%x1f%ad%x1f%s%x00', `${base}..${head}`]),
-      this.run(repo, ['diff', '--name-status', '-z', '-M', `${base}...${head}`, '--']),
-      this.run(repo, ['diff', '--numstat', '-z', '-M', `${base}...${head}`, '--']),
+      this.run(repo, ['rev-list', '--left-right', '--count', `${base}...${head}`], { signal }),
+      this.run(repo, ['log', '-z', '--date=iso-strict', '--pretty=format:%H%x1f%an%x1f%ae%x1f%ad%x1f%s%x00', `${base}..${head}`], { signal }),
+      this.run(repo, ['diff', '--name-status', '-z', '-M', `${base}...${head}`, '--'], { signal }),
+      this.run(repo, ['diff', '--numstat', '-z', '-M', `${base}...${head}`, '--'], { signal }),
     ])
     const [behind = 0, ahead = 0] = counts.trim().split(/\s+/).map(Number)
     const statMap = parseNumStat(stats)

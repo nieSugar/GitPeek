@@ -9,14 +9,15 @@ const esbuild = require('esbuild');
 async function main() {
   const directory = mkdtempSync(join(tmpdir(), 'gitpeek-graph-view-'));
   const originalLoad = Module._load;
+  const vscode = { ViewColumn: {}, env: {}, commands: {}, workspace: {}, window: {} };
   try {
     const outfile = join(directory, 'view.cjs');
     await esbuild.build({ entryPoints: [join(__dirname, '..', 'src', 'features', 'commitGraph.ts')], bundle: true, platform: 'node', format: 'cjs', external: ['vscode'], outfile });
     Module._load = function (request, parent, isMain) {
-      if (request === 'vscode') return {};
+      if (request === 'vscode') return vscode;
       return originalLoad.call(this, request, parent, isMain);
     };
-    const { graphHtml } = require(outfile);
+    const { graphHtml, registerCommitGraph } = require(outfile);
     const html = graphHtml();
     const script = /<script nonce="[^"]+">([\s\S]*?)<\/script>/.exec(html)?.[1];
     assert.ok(script, 'graph webview script is present');
@@ -207,7 +208,79 @@ async function main() {
     assert.equal(elements.more.hidden, true, 'failed queries do not keep the previous load-more action');
     renderSearch({ kind: 'message', text: '', scope: 'all' }, [root]);
     assert.equal(elements.rows.children.length, 1, 'a corrected query recovers after errors');
-    console.log('Commit graph Webview passed (CSP, SVG lanes, refs, empty state, actions and search regressions).');
+    const commands = new Map(), posted = [], requests = [], diffs = [], details = [];
+    const disposable = { dispose() {} };
+    let panelReceive, disposePanel, viewChanged, configurationChanged, selectedRepo = { id: 'first', root: '/repo/first' }, enabled = true;
+    const panel = { visible: true, reveal() {}, onDidDispose(callback) { disposePanel = callback; return disposable; }, onDidChangeViewState(callback) { viewChanged = callback; return disposable; },
+      webview: { postMessage: async message => posted.push(message), onDidReceiveMessage(callback) { panelReceive = callback; return disposable; } } };
+    Object.assign(vscode, {
+      ViewColumn: { Active: 1 }, env: { clipboard: {} },
+      commands: { registerCommand(name, callback) { commands.set(name, callback); return disposable; } },
+      workspace: { getConfiguration: () => ({ get: (_name, fallback) => enabled ? fallback : false }), onDidChangeConfiguration(callback) { configurationChanged = callback; return disposable; } },
+      window: { createWebviewPanel: () => panel, showInformationMessage: async () => {}, showErrorMessage: async message => { throw new Error(message); } },
+    });
+    const service = { run: async (_repo, args, options = {}) => {
+      if (args[0] === 'branch') return 'main\n';
+      if (args[0] === 'for-each-ref') return 'main\n';
+      if (args[0] === 'rev-parse' && args.includes('HEAD')) return root.hash;
+      if (args[0] === 'show') {
+        if (args.includes('--name-status')) return 'M\0hit.txt\0';
+        return 'diff --git a/hit.txt b/hit.txt\n--- a/hit.txt\n+++ b/hit.txt\n@@ -1 +1 @@\n-old\n+Needle\n';
+      }
+      if (args[0] !== 'log') throw new Error('optional Git metadata unavailable');
+      assert.ok(options.signal, 'every graph log is explicitly cancellable');
+      return new Promise((resolve, reject) => {
+        const request = { args, signal: options.signal, resolve, reject };
+        requests.push(request);
+        if (requests.length > 1) options.signal.addEventListener('abort', () => reject(Object.assign(new Error('cancelled'), { name: 'AbortError' })), { once: true });
+      });
+    } };
+    const graph = registerCommitGraph({ subscriptions: [] }, service, { pickRepository: async () => selectedRepo },
+      async (...args) => details.push(args), undefined, async (...args) => diffs.push(args));
+    const until = async condition => { for (let count = 0; count < 30 && !condition(); count++) await new Promise(resolve => setImmediate(resolve)); assert.ok(condition(), 'async graph operation completed'); };
+    const record = (hash, subject = 'Needle') => `* ${hash}\x1f\x1fTest\x1ftest@example.invalid\x1f0\x1f${subject}\x1f\x1e`;
+    await commands.get('gitpeek.showCommitGraph')();
+    panelReceive({ type: 'ready' }); await until(() => requests.length === 1);
+    panelReceive({ type: 'search', kind: 'code', text: 'Needle', scope: 'all' }); await until(() => requests.length === 2);
+    assert.equal(requests[0].signal.aborted, true, 'changing conditions stops the previous Git query');
+    requests[1].resolve(record(root.hash));
+    await until(() => posted.some(message => message.type === 'render'));
+    requests[0].resolve(record('f'.repeat(40), 'late stale result'));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(posted.filter(message => message.type === 'render').length, 1, 'a late result from a caller that ignores cancellation cannot overwrite the new render');
+    let rendered = posted.findLast(message => message.type === 'render');
+    assert.equal(rendered.query.kind, 'code');
+    assert.equal(posted.some(message => message.type === 'error'), false, 'cancelled queries do not overwrite the new state with errors');
+    panelReceive({ type: 'commit', hash: root.hash, repoId: rendered.repoId, generation: rendered.generation });
+    await until(() => diffs.length === 1);
+    assert.deepEqual(diffs[0], [selectedRepo, root.hash, 'hit.txt', undefined, undefined, { side: 'right', line: 1, text: 'Needle' }]);
+    assert.equal(details.length, 0, 'code results open the matching native Diff directly');
+    panelReceive({ type: 'commit', hash: root.hash, repoId: 'other', generation: rendered.generation });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(diffs.length, 1, 'stale repository selections cannot open a Diff');
+    const firstRefresh = graph.refresh(); await until(() => requests.length === 3);
+    selectedRepo = { id: 'second', root: '/repo/second' };
+    const switched = commands.get('gitpeek.showCommitGraph')(); await until(() => requests.length === 4);
+    assert.equal(requests[2].signal.aborted, true, 'changing repositories stops the previous Git query');
+    requests[3].resolve(Array.from({ length: 101 }, (_, index) => record(index.toString(16).padStart(40, '0'))).join('\n'));
+    await Promise.all([firstRefresh, switched]);
+    rendered = posted.findLast(message => message.type === 'render');
+    assert.equal(rendered.repoId, 'second'); assert.equal(rendered.data.hasMore, true);
+    panelReceive({ type: 'loadMore' }); await until(() => requests.length === 5);
+    assert.ok(requests[4].args.includes('--max-count=201'), 'load-more queries preserve the existing bounded pagination');
+    requests[4].resolve(record(root.hash)); await until(() => posted.findLast(message => message.type === 'render').generation > rendered.generation);
+    const hidden = graph.refresh(); await until(() => requests.length === 6);
+    panel.visible = false; viewChanged(); await hidden;
+    assert.equal(requests[5].signal.aborted, true, 'hiding the graph stops inactive subprocesses');
+    panel.visible = true; viewChanged(); await until(() => requests.length === 7);
+    enabled = false; configurationChanged({ affectsConfiguration: () => true });
+    assert.equal(requests[6].signal.aborted, true, 'disabling the extension stops the query');
+    enabled = true;
+    const closing = graph.refresh(); await until(() => requests.length === 8);
+    const beforeClose = posted.length; disposePanel(); await closing;
+    assert.equal(requests[7].signal.aborted, true, 'closing the view terminates the query');
+    assert.equal(posted.length, beforeClose, 'closed views receive neither stale render nor cancellation error');
+    console.log('Commit graph Webview passed (CSP, SVG lanes, search, native hit Diff, pagination and query lifecycle cancellation).');
   } finally {
     Module._load = originalLoad;
     if (!directory.startsWith(tmpdir() + sep)) throw new Error('Temporary graph view escaped temp directory');

@@ -60,6 +60,7 @@ const PUBLIC_COMMANDS = [
   'gitpeek.toggleFileBlame', 'gitpeek.previousFileRevision', 'gitpeek.nextFileRevision',
   'gitpeek.fileHistory', 'gitpeek.showCommitGraph', 'gitpeek.stash', 'gitpeek.blameCurrentLine', 'gitpeek.selectionOrigins', 'gitpeek.compareWithBase',
   'gitpeek.showBranchChanges', 'gitpeek.reviewChanges', 'gitpeek.generateCommitMessage', 'gitpeek.refresh', 'gitpeek.selectionHistory',
+  'gitpeek.chooseBaseBranch', 'gitpeek.showConflicts', 'gitpeek.rebaseBackups',
 ];
 const hostResult = await runHostProbe({ vscode: hostVscode });
 assert.equal(hostResult.publicCommands, PUBLIC_COMMANDS.length);

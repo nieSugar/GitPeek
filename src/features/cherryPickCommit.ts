@@ -1,11 +1,12 @@
 import type { GitService } from '../git/GitService';
 import type { Repository } from '../git/types';
 
-export async function cherryPickInProgress(git: GitService, repo: Repository): Promise<boolean> {
+export async function cherryPickInProgress(git: GitService, repo: Repository, signal?: AbortSignal): Promise<boolean> {
   try {
-    await git.run(repo, ['rev-parse', '--verify', '--quiet', 'CHERRY_PICK_HEAD']);
+    await git.run(repo, ['rev-parse', '--verify', '--quiet', 'CHERRY_PICK_HEAD'], { signal });
     return true;
-  } catch {
+  } catch (error) {
+    if (signal?.aborted) throw error;
     return false;
   }
 }

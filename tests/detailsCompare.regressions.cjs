@@ -17,7 +17,7 @@ async function main() {
     EventEmitter: class { event = () => disposable; fire() {} dispose() {} },
     TreeItem: class { constructor(label, collapsibleState) { this.label = label; this.collapsibleState = collapsibleState; } },
     TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
-    Uri: { from: value => ({ ...value, toString: () => JSON.stringify(value) }) },
+    Uri: { from: value => ({ ...value, toString: () => JSON.stringify(value) }), file: fsPath => ({ scheme: 'file', fsPath }) },
     workspace: { textDocuments: [], getConfiguration: () => ({ get: (key, fallback) => key === 'enabled' ? enabled : fallback }),
       onDidChangeConfiguration: handler => (configurationHandlers.push(handler), disposable),
       registerTextDocumentContentProvider: (name, provider) => (providers.set(name, provider), disposable) },
@@ -60,7 +60,9 @@ async function main() {
     const workingBinary = await workingContents(service, { repo, hash: root, file: 'binary.bin' });
     assert.notEqual(workingBinary.before, workingBinary.after);
     assert.match(workingBinary.after, /工作区磁盘/);
-    const context = { subscriptions: [] };
+    const stored = new Map();
+    const context = { subscriptions: [], workspaceState: { get: key => stored.get(key), update: async (key, value) => stored.set(key, structuredClone(value)) } };
+    vscode.workspace.workspaceFolders = [{ uri: { fsPath: repo.root } }];
     const details = registerCommitFeatures(context, service);
     await details.showCommit(repo, root);
     const detailProvider = views.get('gitpeek.commitDetails');
@@ -136,6 +138,35 @@ async function main() {
     git(repo, 'switch', '-c', 'side', root); write(repo, 'side.txt', 'side\n'); const side = commit(repo, 'side');
     git(repo, 'switch', 'main'); git(repo, 'merge', '--no-ff', 'side', '-m', 'merge side');
     assert.equal((await resolveWorkspacePaths(service, repo, side, [{ path: 'side.txt', status: 'A' }])).size, 0, 'non-first-parent origins do not invent mappings');
+    await details.showCommit(repo, root);
+    await commands.get('gitpeek.internal.details.pin')();
+    assert.equal(stored.get('gitpeek.investigation.commit.v1').hash, root);
+    const beforeRestoreFocus = executed.filter(([name]) => name === 'gitpeek.commitDetails.focus').length;
+    const restoredDetails = registerCommitFeatures(context, service, { forUri: async () => repo });
+    const until = async predicate => {
+      const deadline = Date.now() + 5000;
+      while (!predicate()) { assert.ok(Date.now() < deadline, 'pin restore timed out'); await new Promise(resolve => setTimeout(resolve, 10)); }
+    };
+    const restoredRows = () => views.get('gitpeek.commitDetails').getChildren();
+    await until(() => restoredRows()[0].commitTarget?.hash === root);
+    await restoredDetails.showCommit(repo, tip);
+    assert.equal(restoredRows()[0].commitTarget.hash, root, 'restart restores the immutable pin instead of current HEAD');
+    assert.equal(executed.filter(([name]) => name === 'gitpeek.commitDetails.focus').length, beforeRestoreFocus + 1,
+      'restoration itself must not focus; explicitly showing a pinned commit may focus');
+    stored.set('gitpeek.investigation.commit.v1', { root: repo.root, id: repo.id, hash: 'f'.repeat(40) });
+    const noticeCount = notices.length;
+    registerCommitFeatures(context, service, { forUri: async () => repo });
+    await until(() => notices.length > noticeCount);
+    assert.match(notices.at(-1), /已失效/);
+    assert.equal(stored.get('gitpeek.investigation.commit.v1'), undefined);
+    stored.set('gitpeek.investigation.commit.v1', { root: repo.root, id: repo.id, hash: root });
+    let resolveRestore;
+    const late = registerCommitFeatures(context, service, { forUri: () => new Promise(resolve => resolveRestore = resolve) });
+    await late.showCommit(repo, tip);
+    resolveRestore(repo);
+    await new Promise(resolve => setTimeout(resolve, 200));
+    assert.equal(restoredRows()[0].commitTarget.hash, tip, 'late startup restoration cannot replace a new investigation');
+    for (const subscription of context.subscriptions) subscription.dispose();
     console.log('Details/compare regressions passed: verified rename identities, deletion/name reuse, binary references, compact details, folded messages, contextual visibility, pin, stale/disabled actions and immutable URI reload.');
   } finally {
     Module._load = originalLoad;

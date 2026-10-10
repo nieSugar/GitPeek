@@ -1,6 +1,7 @@
 import { posix, win32 } from 'node:path';
 import type { GitService } from '../git/GitService';
-import type { Repository } from '../git/types';
+import { parseNameStatus } from '../git/GitParser';
+import type { FileChange, Repository } from '../git/types';
 
 export interface GraphRow {
   graph: string;
@@ -81,22 +82,22 @@ export function parseGraph(output: string, limit: number): Pick<GraphSnapshot, '
   return { rows, hasMore: false };
 }
 
-export async function loadGraph(git: GitService, repo: Repository, limit = 100, query?: GraphQuery): Promise<GraphSnapshot> {
+export async function loadGraph(git: GitService, repo: Repository, limit = 100, query?: GraphQuery, signal?: AbortSignal): Promise<GraphSnapshot> {
   if (query) query = normalizeGraphQuery(query);
   const count = Math.max(1, Math.floor(limit));
   const [branch, branches, head] = await Promise.all([
-    git.run(repo, ['branch', '--show-current']),
-    git.run(repo, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']),
-    git.run(repo, ['rev-parse', '--verify', 'HEAD']).catch(() => ''),
+    git.run(repo, ['branch', '--show-current'], { signal }),
+    git.run(repo, ['for-each-ref', '--format=%(refname:short)', 'refs/heads'], { signal }),
+    git.run(repo, ['rev-parse', '--verify', 'HEAD'], { signal }).catch(error => { if (signal?.aborted) throw error; return ''; }),
   ]);
   const refs = query?.scope === 'current' ? ['HEAD'] : ['--all', 'HEAD'];
   const filters: string[] = [];
   if (query?.text) {
     if (query.kind === 'hash') {
       if (!/^[0-9a-f]{4,64}$/i.test(query.text)) throw new Error('Hash 至少需要 4 位十六进制字符。');
-      const hash = (await git.run(repo, ['rev-parse', '--verify', '--end-of-options', `${query.text}^{commit}`])).trim();
+      const hash = (await git.run(repo, ['rev-parse', '--verify', '--end-of-options', `${query.text}^{commit}`], { signal })).trim();
       if (query.scope === 'current') {
-        try { await git.run(repo, ['merge-base', '--is-ancestor', hash, 'HEAD']); }
+        try { await git.run(repo, ['merge-base', '--is-ancestor', hash, 'HEAD'], { signal }); }
         catch (error) {
           if ((error as Error & { cause?: { code?: number } }).cause?.code !== 1) throw error;
           return { branch: branch.trim(), branches: branches.trim().split(/\r?\n/).filter(Boolean), rows: [], hasMore: false };
@@ -114,8 +115,59 @@ export async function loadGraph(git: GitService, repo: Repository, limit = 100, 
     'log', ...(hashSearch ? [] : ['--graph']), ...filters, ...refs, '--date-order', `--max-count=${count + 1}`, ...(hashSearch ? ['--no-walk'] : []),
     '--pretty=format:%H%x1f%P%x1f%an%x1f%ae%x1f%ct%x1f%s%x1f%D%x1e',
     '--', ...(query?.path ? [`:(literal)${query.path}`] : []),
-  ], { timeoutMs: 10_000 }), count) : { rows: [], hasMore: false };
+  ], { timeoutMs: 10_000, signal }), count) : { rows: [], hasMore: false };
   return { branch: branch.trim(), branches: branches.trim().split(/\r?\n/).filter(Boolean), ...result };
+}
+
+export async function loadCodeSearchFiles(git: GitService, repo: Repository, hash: string, query: GraphQuery, signal?: AbortSignal): Promise<FileChange[]> {
+  query = normalizeGraphQuery(query);
+  if (query.kind !== 'code' || !query.text || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(hash)) throw new Error('代码搜索结果或提交快照无效。');
+  return parseNameStatus(await git.run(repo, [
+    'show', '--format=', '--diff-merges=first-parent', '--no-ext-diff', '--no-textconv', '--name-status', '-z', '-M', `-S${query.text}`,
+    hash, '--', ...(query.path ? [`:(literal)${query.path}`] : []),
+  ], { timeoutMs: 10_000, signal }));
+}
+
+export async function loadCodeSearchLocation(git: GitService, repo: Repository, hash: string, file: FileChange, text: string, signal?: AbortSignal): Promise<{ location?: { side: 'left' | 'right'; line: number; text: string }; reason?: string }> {
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(hash) || !text || text.includes('\0')) throw new Error('代码搜索定位条件无效。');
+  const parent = file.status === 'R' ? (await git.run(repo, ['rev-list', '--parents', '-n', '1', hash], { signal })).trim().split(/\s+/)[1] : undefined;
+  // Compare the renamed blobs directly: the old name may be reused by another file in the same commit.
+  const revision = file.status === 'R'
+    ? ['diff', `${parent}:${file.oldPath}`, `${hash}:${file.path}`]
+    : ['show', '--format=', '--diff-merges=first-parent', hash];
+  const patch = await git.run(repo, [
+    ...revision, '--no-color', '--no-ext-diff', '--no-textconv', '--unified=0', '--inter-hunk-context=0',
+    '--', ...(file.status === 'R' ? [] : [`:(literal)${file.path}`]),
+  ], { timeoutMs: 10_000, signal });
+  if (/^(?:Binary files |GIT binary patch)/m.test(patch)) return { reason: '命中发生在二进制文件中，无法定位到文本行。' };
+  let oldLine = 0, newLine = 0;
+  let block: { side: 'left' | 'right'; line: number; lines: string[] } | undefined;
+  const locate = () => {
+    if (!block) return undefined;
+    const contents = block.lines.join('\n');
+    const offset = contents.indexOf(text);
+    if (offset < 0) return undefined;
+    const index = contents.slice(0, offset).split('\n').length - 1;
+    return { side: block.side, line: block.line + index, text: block.lines[index].replace(/\r$/, '') };
+  };
+  for (const line of patch.split('\n')) {
+    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+    const side = oldLine || newLine ? line.startsWith('-') ? 'left' : line.startsWith('+') ? 'right' : undefined : undefined;
+    if (block && (hunk || side !== block.side)) {
+      const location = locate();
+      if (location) return { location };
+      block = undefined;
+    }
+    if (hunk) { oldLine = Number(hunk[1]); newLine = Number(hunk[2]); continue; }
+    if (side) {
+      block ??= { side, line: side === 'left' ? oldLine : newLine, lines: [] };
+      block.lines.push(line.slice(1));
+      if (side === 'left') oldLine++; else newLine++;
+    } else if (line.startsWith(' ')) { oldLine++; newLine++; }
+    else if (!line.startsWith('\\')) { oldLine = 0; newLine = 0; }
+  }
+  const location = locate();
+  return location ? { location } : { reason: 'Git 确认文本出现次数发生变化，但补丁中没有可核实的增删命中行（文本可能跨越未变化的行或受文件类型影响）。' };
 }
 
 export async function createAndSwitchBranch(git: GitService, repo: Repository, name: string): Promise<void> {

@@ -1,11 +1,13 @@
 import * as vscode from 'vscode';
-import { basename } from 'node:path';
+import { basename, isAbsolute, relative, sep } from 'node:path';
 import { loadCommitDetail, loadCommitDiffContents, readCommitContent, resolveWorkspacePaths, type CommitContentRef } from './gitContent';
 import type { GitService } from '../git/GitService';
+import type { RepositoryService } from '../git/RepositoryService';
 import type { CommitDetail, Repository } from '../git/types';
 import { adjacentFileRevision, validFile, validRevisionContext, type FileRevisionContext } from './fileRevisions';
 
 const CONTENT_SCHEME = 'gitpeek-commit';
+export interface DiffLocation { side: 'left' | 'right'; line: number; text?: string }
 type ContentRef = CommitContentRef & Partial<FileRevisionContext> & { repoId: string; root: string; workspacePath?: string };
 
 class GitContentProvider implements vscode.TextDocumentContentProvider {
@@ -62,10 +64,14 @@ class CommitFeatures {
   private pinned = false;
   private generation = 0;
   private diffGeneration = 0;
+  private detailsQuery?: AbortController;
+  private diffQuery?: AbortController;
+  private context?: vscode.ExtensionContext;
 
   constructor(private readonly git: GitService) { this.content = new GitContentProvider(git); }
 
-  register(context: vscode.ExtensionContext): void {
+  register(context: vscode.ExtensionContext, repositories?: RepositoryService): void {
+    this.context = context;
     context.subscriptions.push(
       this.changed,
       vscode.workspace.registerTextDocumentContentProvider(CONTENT_SCHEME, this.content),
@@ -76,29 +82,67 @@ class CommitFeatures {
       vscode.commands.registerCommand('gitpeek.internal.details.openDiff', (repo: Repository, hash: string, file: string, workspacePath?: string) => this.showDiff(repo, hash, file, workspacePath)),
       vscode.commands.registerCommand('gitpeek.previousFileRevision', (uri?: vscode.Uri) => this.navigateRevision(1, uri)),
       vscode.commands.registerCommand('gitpeek.nextFileRevision', (uri?: vscode.Uri) => this.navigateRevision(-1, uri)),
-      vscode.window.onDidChangeActiveTextEditor(() => { this.diffGeneration++; }),
+      vscode.window.onDidChangeActiveTextEditor(() => { this.diffGeneration++; this.diffQuery?.abort(); }),
       vscode.commands.registerCommand('gitpeek.internal.details.pin', () => {
         if (!this.current) return;
         this.pinned = true;
         this.generation++;
+        this.detailsQuery?.abort();
+        this.persistPin();
         void vscode.commands.executeCommand('setContext', 'gitpeek.detailsPinned', true);
       }),
       vscode.commands.registerCommand('gitpeek.internal.details.unpin', async () => {
         this.pinned = false;
+        this.persistPin();
         await vscode.commands.executeCommand('setContext', 'gitpeek.detailsPinned', false);
         if (this.pending) await this.showCommit(this.pending.repo, this.pending.hash);
       }),
       vscode.workspace.onDidChangeConfiguration(event => {
         if (!event.affectsConfiguration('gitpeek.enabled') || vscode.workspace.getConfiguration('gitpeek').get('enabled', true)) return;
         this.generation++; this.diffGeneration++; this.current = undefined; this.pending = undefined; this.pinned = false;
+        this.detailsQuery?.abort(); this.diffQuery?.abort(); this.persistPin();
         this.rows = [new vscode.TreeItem('GitPeek 已禁用。')]; this.changed.fire();
         void vscode.commands.executeCommand('setContext', 'gitpeek.detailsPinned', false);
         void vscode.commands.executeCommand('setContext', 'gitpeek.hasCommitDetails', false);
       }),
     );
+    context.subscriptions.push({ dispose: () => { this.generation++; this.diffGeneration++; this.detailsQuery?.abort(); this.diffQuery?.abort(); } });
+    if (repositories) void this.restorePin(repositories);
   }
 
-  async showCommit(repo: Repository, hash: string): Promise<void> {
+  private persistPin(): void {
+    const value = this.pinned && this.current ? { root: this.current.repo.root, id: this.current.repo.id, hash: this.current.detail.hash } : undefined;
+    void this.context?.workspaceState?.update('gitpeek.investigation.commit.v1', value);
+  }
+
+  private async restorePin(repositories: RepositoryService): Promise<void> {
+    const saved = this.context?.workspaceState?.get<{ root: string; id: string; hash: string }>('gitpeek.investigation.commit.v1');
+    if (!saved || !vscode.workspace.getConfiguration('gitpeek').get('enabled', true)) return;
+    const request = this.generation;
+    const signal = (this.detailsQuery = new AbortController()).signal;
+    try {
+      if (typeof saved.root !== 'string' || !isAbsolute(saved.root) || saved.root.includes('\0') || typeof saved.id !== 'string'
+        || typeof saved.hash !== 'string' || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(saved.hash)) throw new Error();
+      const within = (value: string) => !isAbsolute(value) && value !== '..' && !value.startsWith(`..${sep}`);
+      if (!(vscode.workspace.workspaceFolders ?? []).some(folder => within(relative(folder.uri.fsPath, saved.root)) || within(relative(saved.root, folder.uri.fsPath)))) throw new Error();
+      const repo = await repositories.forUri(vscode.Uri.file(saved.root));
+      if (!repo || repo.id !== saved.id || relative(repo.root, saved.root) !== '') throw new Error();
+      const hash = (await this.git.run(repo, ['rev-parse', '--verify', '--end-of-options', `${saved.hash}^{commit}`], { signal })).trim();
+      if (hash !== saved.hash) throw new Error();
+      if (request !== this.generation) return;
+      await this.showCommit(repo, hash, false);
+      if (this.generation === request + 1 && this.current?.detail.hash === hash && this.current.repo.id === repo.id) {
+        this.pinned = true;
+        await vscode.commands.executeCommand('setContext', 'gitpeek.detailsPinned', true);
+      }
+    } catch {
+      if (request !== this.generation) return;
+      this.persistPin();
+      await vscode.window.showInformationMessage('GitPeek：固定的提交详情已失效，未恢复；请重新选择仓库或提交。');
+    }
+  }
+
+  async showCommit(repo: Repository, hash: string, focus = true): Promise<void> {
     if (!vscode.workspace.getConfiguration('gitpeek').get('enabled', true)) return;
     this.pending = { repo, hash };
     if (this.pinned && this.current) {
@@ -109,15 +153,17 @@ class CommitFeatures {
       return;
     }
     const request = ++this.generation;
+    this.detailsQuery?.abort();
+    const signal = (this.detailsQuery = new AbortController()).signal;
     this.current = undefined;
     this.rows = [new vscode.TreeItem('正在加载提交详情…')]; this.changed.fire();
     await vscode.commands.executeCommand('setContext', 'gitpeek.hasCommitDetails', true);
     if (request !== this.generation) return;
-    await vscode.commands.executeCommand('gitpeek.commitDetails.focus');
+    if (focus) await vscode.commands.executeCommand('gitpeek.commitDetails.focus');
     try {
-      const detail = await loadCommitDetail(this.git, repo, hash);
-      const message = (await this.git.run(repo, ['show', '-s', '--format=%B', detail.hash])).replace(/\n+$/, '');
-      const workspacePaths = await resolveWorkspacePaths(this.git, repo, detail.hash, detail.files);
+      const detail = await loadCommitDetail(this.git, repo, hash, signal);
+      const message = (await this.git.run(repo, ['show', '-s', '--format=%B', detail.hash], { signal })).replace(/\n+$/, '');
+      const workspacePaths = await resolveWorkspacePaths(this.git, repo, detail.hash, detail.files, signal);
       if (request !== this.generation) return;
       this.current = { repo, detail };
       this.content.register(repo);
@@ -156,14 +202,16 @@ class CommitFeatures {
     }
   }
 
-  async showDiff(repo: Repository, hash: string, filePath?: string, workspacePath?: string, history?: Pick<FileRevisionContext, 'historyHead' | 'historyFile'>): Promise<void> {
+  async showDiff(repo: Repository, hash: string, filePath?: string, workspacePath?: string, history?: Pick<FileRevisionContext, 'historyHead' | 'historyFile'>, location?: DiffLocation): Promise<void> {
     if (!vscode.workspace.getConfiguration('gitpeek').get('enabled', true)) return;
     const request = ++this.diffGeneration;
+    this.diffQuery?.abort();
+    const signal = (this.diffQuery = new AbortController()).signal;
     const current = () => request === this.diffGeneration && vscode.workspace.getConfiguration('gitpeek').get('enabled', true);
     try {
-      const historyHead = history?.historyHead ?? (workspacePath ? (await this.git.run(repo, ['rev-parse', '--verify', 'HEAD']).catch(() => '')).trim() : '');
+      const historyHead = history?.historyHead ?? (workspacePath ? (await this.git.run(repo, ['rev-parse', '--verify', 'HEAD'], { signal }).catch(error => { if (signal.aborted) throw error; return ''; })).trim() : '');
       if (history && (!/^[0-9a-f]{40,64}$/i.test(historyHead) || !validFile(history.historyFile))) throw new Error('文件历史快照无效。');
-      const detail = await loadCommitDetail(this.git, repo, hash);
+      const detail = await loadCommitDetail(this.git, repo, hash, signal);
       if (!current()) return;
       this.content.register(repo);
       if (!filePath && detail.files.length > 1) {
@@ -180,7 +228,7 @@ class CommitFeatures {
         historyHead: /^[0-9a-f]{40,64}$/i.test(historyHead) ? historyHead : detail.hash,
         historyFile: history?.historyFile ?? (historyHead && workspacePath ? workspacePath : filePath),
         currentCommit: detail.hash, currentFile: filePath,
-      }, current);
+      }, current, location, signal);
     } catch (error) {
       if (current()) await vscode.window.showErrorMessage(`GitPeek：无法打开差异：${errorMessage(error)}`);
     }
@@ -194,20 +242,22 @@ class CommitFeatures {
       await vscode.window.showInformationMessage('GitPeek：请先打开一个提交文件差异。'); return;
     }
     const request = ++this.diffGeneration;
+    this.diffQuery?.abort();
+    const signal = (this.diffQuery = new AbortController()).signal;
     const current = () => request === this.diffGeneration && vscode.workspace.getConfiguration('gitpeek').get('enabled', true)
       && this.activeRevisionUri()?.toString() === source?.toString();
     try {
       const { repo, ref } = this.content.navigation(uri);
-      const { context, commit } = await adjacentFileRevision(this.git, repo, ref, direction);
+      const { context, commit } = await adjacentFileRevision(this.git, repo, ref, direction, signal);
       if (!current()) return;
       if (!commit) {
         await vscode.window.showInformationMessage(direction === 1 ? 'GitPeek：已到此文件的最早修改。' : 'GitPeek：已到本次历史快照的最新修改。'); return;
       }
-      const detail = await loadCommitDetail(this.git, repo, commit.hash);
+      const detail = await loadCommitDetail(this.git, repo, commit.hash, signal);
       if (!current()) return;
       await this.showDiffForCommit(repo, detail, commit.filePath, ref.workspacePath, {
         ...context, currentCommit: commit.hash, currentFile: commit.filePath,
-      }, current);
+      }, current, undefined, signal);
     } catch (error) {
       if (current()) await vscode.window.showErrorMessage(`GitPeek：无法切换文件版本：${errorMessage(error)}`);
     }
@@ -222,8 +272,8 @@ class CommitFeatures {
     return undefined;
   }
 
-  private async showDiffForCommit(repo: Repository, detail: CommitDetail, filePath: string, workspacePath: string | undefined, revision: FileRevisionContext, current: () => boolean): Promise<void> {
-    const loaded = await loadCommitDiffContents(this.git, repo, detail, filePath);
+  private async showDiffForCommit(repo: Repository, detail: CommitDetail, filePath: string, workspacePath: string | undefined, revision: FileRevisionContext, current: () => boolean, location?: DiffLocation, signal?: AbortSignal): Promise<void> {
+    const loaded = await loadCommitDiffContents(this.git, repo, detail, filePath, signal);
     if (!current()) return;
     revision = { ...revision, currentFile: loaded.file.path };
     const oldPath = loaded.file.status === 'R' ? loaded.file.oldPath! : loaded.file.path;
@@ -234,15 +284,27 @@ class CommitFeatures {
     const before = loaded.parent ? loaded.parent.slice(0, detail.shortHash.length) : '空文件';
     const title = `${basename(repo.root)} · ${loaded.file.oldPath ? `${loaded.file.oldPath} → ` : ''}${loaded.file.path} (${before} → ${detail.shortHash})${loaded.binary ? ' · 二进制文件' : ''}`;
     await vscode.commands.executeCommand('vscode.diff', oldUri, newUri, title);
+    if (location) {
+      const line = location.line - 1;
+      const text = (location.side === 'left' ? loaded.oldContent : loaded.newContent).split(/\r?\n/)[line];
+      const uri = location.side === 'left' ? oldUri : newUri;
+      const editor = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === uri.toString());
+      if (!loaded.binary && Number.isInteger(line) && line >= 0 && text !== undefined
+        && (!location.text || text.includes(location.text)) && editor) {
+        const position = new vscode.Position(line, 0);
+        editor.selection = new vscode.Selection(position, position);
+        editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
+      } else await vscode.window.showInformationMessage('GitPeek：已打开文件差异，但无法确认或显示命中行的位置。');
+    }
   }
 }
 
-export function registerCommitFeatures(context: vscode.ExtensionContext, git: GitService): {
+export function registerCommitFeatures(context: vscode.ExtensionContext, git: GitService, repositories?: RepositoryService): {
   showCommit(repo: Repository, hash: string): Promise<void>;
-  showDiff(repo: Repository, hash: string, file?: string, workspacePath?: string, history?: Pick<FileRevisionContext, 'historyHead' | 'historyFile'>): Promise<void>;
+  showDiff(repo: Repository, hash: string, file?: string, workspacePath?: string, history?: Pick<FileRevisionContext, 'historyHead' | 'historyFile'>, location?: DiffLocation): Promise<void>;
 } {
   const features = new CommitFeatures(git);
-  features.register(context);
+  features.register(context, repositories);
   return { showCommit: features.showCommit.bind(features), showDiff: features.showDiff.bind(features) };
 }
 

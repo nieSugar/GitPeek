@@ -31,12 +31,12 @@ export interface BranchCompareFeature {
   readonly summary?: BranchCompareSummary
 }
 
-export async function resolveBaseBranch(git: GitService, repo: Repository, configured = 'auto'): Promise<string> {
+export async function resolveBaseBranch(git: GitService, repo: Repository, configured = 'auto', signal?: AbortSignal): Promise<string> {
   const exists = async (ref: string): Promise<boolean> => {
     try {
-      await git.run(repo, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`])
+      await git.run(repo, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`], { signal })
       return true
-    } catch { return false }
+    } catch { signal?.throwIfAborted(); return false }
   }
 
   if (configured !== 'auto') {
@@ -45,20 +45,20 @@ export async function resolveBaseBranch(git: GitService, repo: Repository, confi
   }
 
   try {
-    const target = (await git.run(repo, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'])).trim()
+    const target = (await git.run(repo, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], { signal })).trim()
     const originHead = target.replace(/^refs\/remotes\//, '')
     if (originHead !== target && await exists(originHead)) return originHead
-  } catch { /* Fall through to the local branch names. */ }
+  } catch { signal?.throwIfAborted() }
 
   for (const candidate of FALLBACK_BASES) if (await exists(candidate)) return candidate
   throw new Error('未找到基准分支。请将 gitpeek.baseBranch 设置为已有分支。')
 }
 
-export async function loadBranchCompare(git: GitService, repo: Repository, base: string): Promise<BranchCompareSummary> {
+export async function loadBranchCompare(git: GitService, repo: Repository, base: string, signal?: AbortSignal): Promise<BranchCompareSummary> {
   const readRefs = () => Promise.all([
-    git.status(repo),
-    git.run(repo, ['rev-parse', '--verify', '--end-of-options', 'HEAD^{commit}']).then((value) => value.trim()),
-    git.run(repo, ['rev-parse', '--verify', '--end-of-options', `${base}^{commit}`]).then((value) => value.trim()),
+    git.status(repo, signal),
+    git.run(repo, ['rev-parse', '--verify', '--end-of-options', 'HEAD^{commit}'], { signal }).then((value) => value.trim()),
+    git.run(repo, ['rev-parse', '--verify', '--end-of-options', `${base}^{commit}`], { signal }).then((value) => value.trim()),
   ] as const)
   const [status, head, baseHead] = await readRefs()
   if (!/^[0-9a-f]{40,64}$/i.test(head)) throw new Error('当前分支尚无提交。')
@@ -66,14 +66,15 @@ export async function loadBranchCompare(git: GitService, repo: Repository, base:
 
   let mergeBase: string
   try {
-    mergeBase = (await git.run(repo, ['merge-base', baseHead, head])).trim()
+    mergeBase = (await git.run(repo, ['merge-base', baseHead, head], { signal })).trim()
   } catch {
+    signal?.throwIfAborted()
     throw new Error(`基准分支“${base}”与当前分支没有共同祖先。`)
   }
   if (!mergeBase) throw new Error(`基准分支“${base}”与当前分支没有共同祖先。`)
 
   // GitService.compare uses base...HEAD for the file set and counts; that diff is merge-base(base, HEAD) → HEAD.
-  const comparison = await git.compare(repo, baseHead, head)
+  const comparison = await git.compare(repo, baseHead, head, signal)
   const [latestStatus, latestHead, latestBase] = await readRefs()
   if (latestHead !== head || latestBase !== baseHead || latestStatus.branch !== status.branch) {
     throw new Error('分支或基准已变化，请重新运行“与基准分支比较”。')
@@ -142,6 +143,12 @@ export function registerBranchCompare(
   let watchedRepoId: string | undefined
   let watcherRequest = 0
   let repoWatchers: vscode.Disposable[] = []
+  let query: AbortController | undefined
+  let diffQuery: AbortController | undefined
+  let baseQuery: AbortController | undefined
+  let watcherQuery: AbortController | undefined
+  let disposed = false
+  const baseKey = (repo: Repository): string => `gitpeek.branchBase:${repo.id}\0${repo.root}`
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 90)
   statusBar.text = '$(git-branch) GitPeek：与基准分支比较'
   statusBar.tooltip = 'GitPeek：比较当前分支与基准分支'
@@ -159,38 +166,43 @@ export function registerBranchCompare(
   const enabled = (): boolean => vscode.workspace.getConfiguration('gitpeek').get<boolean>('enabled', true)
   const clearWatchers = (): void => {
     watcherRequest++
+    watcherQuery?.abort()
     for (const watcher of repoWatchers) watcher.dispose()
     repoWatchers = []
     watchedRepoId = undefined
   }
   const clearState = (message: string): void => {
     generation++
+    query?.abort()
+    diffQuery?.abort()
+    baseQuery?.abort()
     currentSummary = undefined
     statusBar.hide()
     updateView(message)
   }
 
   const installWatchers = async (repo: Repository): Promise<void> => {
-    if (!enabled() || activeRepo?.id !== repo.id || watchedRepoId === repo.id) return
+    if (disposed || !enabled() || activeRepo?.id !== repo.id || activeRepo?.root !== repo.root || watchedRepoId === baseKey(repo)) return
     clearWatchers()
+    const controller = watcherQuery = new AbortController()
     const request = watcherRequest
-    watchedRepoId = repo.id
+    watchedRepoId = baseKey(repo)
     let paths: string[]
     try {
       paths = await Promise.all(['HEAD', 'packed-refs', 'refs', 'logs/HEAD'].map(async (path) =>
-        resolve(repo.root, (await git.run(repo, ['rev-parse', '--git-path', path])).trim())))
+        resolve(repo.root, (await git.run(repo, ['rev-parse', '--git-path', path], { signal: controller.signal })).trim())))
     } catch {
       if (request === watcherRequest) watchedRepoId = undefined
       return
     }
-    if (request !== watcherRequest || !enabled() || activeRepo?.id !== repo.id) return
+    if (request !== watcherRequest || !enabled() || activeRepo?.id !== repo.id || activeRepo?.root !== repo.root) return
     const watchers: vscode.FileSystemWatcher[] = []
     for (const path of paths) {
       const isRefsDir = basename(path) === 'refs'
       const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(isRefsDir ? path : dirname(path)), isRefsDir ? '**/*' : basename(path)))
-      watcher.onDidChange(() => { if (enabled() && activeRepo?.id === repo.id) void refresh() })
-      watcher.onDidCreate(() => { if (enabled() && activeRepo?.id === repo.id) void refresh() })
-      watcher.onDidDelete(() => { if (enabled() && activeRepo?.id === repo.id) void refresh() })
+      watcher.onDidChange(() => { if (enabled() && activeRepo?.id === repo.id && activeRepo?.root === repo.root) void refresh() })
+      watcher.onDidCreate(() => { if (enabled() && activeRepo?.id === repo.id && activeRepo?.root === repo.root) void refresh() })
+      watcher.onDidDelete(() => { if (enabled() && activeRepo?.id === repo.id && activeRepo?.root === repo.root) void refresh() })
       watchers.push(watcher)
     }
     repoWatchers = watchers
@@ -198,15 +210,21 @@ export function registerBranchCompare(
   }
 
   const refresh = async (): Promise<void> => {
+    query?.abort()
+    diffQuery?.abort()
+    if (disposed) return
     if (!enabled()) { clearState('GitPeek 分支比较已禁用。请启用 gitpeek.enabled 后使用。'); return }
     const repo = activeRepo
     if (!repo) { statusBar.hide(); currentSummary = undefined; updateView('打开 Git 文件以比较其所在分支。'); return }
     const request = ++generation
+    const controller = query = new AbortController()
+    currentSummary = undefined
     statusBar.show()
     try {
       const configured = vscode.workspace.getConfiguration('gitpeek').get<string>('baseBranch', 'auto')
-      const base = await resolveBaseBranch(git, repo, configured)
-      const summary = await loadBranchCompare(git, repo, base)
+      const remembered = context.workspaceState?.get<string>(baseKey(repo))
+      const base = await resolveBaseBranch(git, repo, remembered ?? configured, controller.signal)
+      const summary = await loadBranchCompare(git, repo, base, controller.signal)
       if (request !== generation) return
       currentSummary = summary
       content.register(repo)
@@ -223,6 +241,8 @@ export function registerBranchCompare(
   }
 
   const openDiff = async (summary: BranchCompareSummary, file: FileChange): Promise<void> => {
+    diffQuery?.abort()
+    const controller = diffQuery = new AbortController()
     try {
       if (!enabled()) {
         await vscode.window.showInformationMessage('GitPeek 分支比较已禁用。请启用 gitpeek.enabled 后使用。')
@@ -233,15 +253,16 @@ export function registerBranchCompare(
       const oldEmpty = file.status === 'A'
       const newEmpty = file.status === 'D'
       const pathspecs = (file.oldPath ? [file.oldPath, file.path] : [file.path]).map((path) => `:(literal)${path}`)
-      const stats = await git.run(summary.repo, ['diff', '--numstat', '-z', summary.mergeBase, summary.head, '--', ...pathspecs])
+      const stats = await git.run(summary.repo, ['diff', '--numstat', '-z', summary.mergeBase, summary.head, '--', ...pathspecs], { signal: controller.signal })
       const binary = stats.split('\0').some((record) => record.startsWith('-\t-\t'))
-      const oldContent = oldEmpty ? '' : binary ? binaryLabel(oldPath, 'before') : await git.run(summary.repo, ['show', `${summary.mergeBase}:${oldPath}`])
-      const newContent = newEmpty ? '' : binary ? binaryLabel(file.path, 'after') : await git.run(summary.repo, ['show', `${summary.head}:${file.path}`])
+      const oldContent = oldEmpty ? '' : binary ? binaryLabel(oldPath, 'before') : await git.run(summary.repo, ['show', `${summary.mergeBase}:${oldPath}`], { signal: controller.signal })
+      const newContent = newEmpty ? '' : binary ? binaryLabel(file.path, 'after') : await git.run(summary.repo, ['show', `${summary.head}:${file.path}`], { signal: controller.signal })
+      if (controller.signal.aborted) return
       if (!enabled()) {
         await vscode.window.showInformationMessage('GitPeek 分支比较已禁用。请启用 gitpeek.enabled 后使用。')
         return
       }
-      if (request !== generation || currentSummary?.head !== summary.head) {
+      if (request !== generation || currentSummary !== summary) {
         await vscode.window.showInformationMessage('GitPeek 分支数据已变化，请重新运行“与基准分支比较”。')
         return
       }
@@ -252,7 +273,47 @@ export function registerBranchCompare(
       const title = `${file.oldPath ? `${file.oldPath} → ` : ''}${file.path} (${summary.base} → ${summary.branch})`
       await vscode.commands.executeCommand('vscode.diff', oldUri, newUri, title)
     } catch (error) {
+      if (controller.signal.aborted || disposed) return
       await vscode.window.showErrorMessage(`GitPeek：无法打开分支差异：${errorMessage(error)}`)
+    }
+  }
+
+  const chooseBase = async (): Promise<void> => {
+    if (!enabled() || disposed) return
+    const editorRepo = vscode.window.activeTextEditor ? await repositories.forUri(vscode.window.activeTextEditor.document.uri) : undefined
+    const repo = editorRepo ?? activeRepo ?? await repositories.pickRepository()
+    if (!repo || !enabled() || disposed) return
+    baseQuery?.abort()
+    const controller = baseQuery = new AbortController()
+    const request = generation
+    try {
+      const output = await git.run(repo, ['for-each-ref', '--sort=refname', '--format=%(refname)%00%(symref)', 'refs/heads/', 'refs/remotes/'], { signal: controller.signal })
+      if (controller.signal.aborted || disposed) return
+      const configured = vscode.workspace.getConfiguration('gitpeek').get<string>('baseBranch', 'auto')
+      const remembered = context.workspaceState?.get<string>(baseKey(repo))
+      const choices = [
+        { label: `使用配置默认（${configured}）`, description: '清除本仓库记住的选择', ref: undefined as string | undefined },
+        { label: '自动检测（auto）', description: '远程默认分支或 main / master / develop', ref: 'auto' },
+        ...output.split('\n').flatMap(line => {
+          const [ref, symbolic] = line.replace(/\r$/, '').split('\0')
+          if (!ref || symbolic) return []
+          return [{ label: ref.replace(/^refs\/(heads|remotes)\//, ''), description: `${ref.startsWith('refs/heads/') ? '本地分支' : '远程分支'}${ref === remembered ? ' · 最近选择' : ''}`, ref }]
+        }),
+      ]
+      const selected = await vscode.window.showQuickPick(choices, { title: `GitPeek：选择比较基准 · ${basename(repo.root)}`, placeHolder: '只记住此仓库的选择；文件比较仍为共同祖先 → HEAD', matchOnDescription: true })
+      if (!selected || controller.signal.aborted || request !== generation || !enabled() || disposed) return
+      const application = ++generation
+      query?.abort()
+      diffQuery?.abort()
+      currentSummary = undefined
+      updateView('正在更新比较基准。')
+      await context.workspaceState.update(baseKey(repo), selected.ref)
+      if (application !== generation || disposed || !enabled()) return
+      activeRepo = repo
+      await installWatchers(repo)
+      await refresh()
+    } catch (error) {
+      if (!controller.signal.aborted && !disposed) await vscode.window.showErrorMessage(`GitPeek：无法选择基准：${errorMessage(error)}`)
     }
   }
 
@@ -304,6 +365,7 @@ export function registerBranchCompare(
 
   const handleActiveEditor = async (editor: vscode.TextEditor | undefined): Promise<void> => {
     if (isGitPeekEditor(editor)) return
+    baseQuery?.abort()
     if (!enabled()) {
       editorGeneration++
       activeRepo = undefined
@@ -320,6 +382,8 @@ export function registerBranchCompare(
     }
     const request = ++editorGeneration
     generation++
+    query?.abort()
+    diffQuery?.abort()
     activeRepo = undefined
     currentSummary = undefined
     clearWatchers()
@@ -350,6 +414,8 @@ export function registerBranchCompare(
     } else if (event.affectsConfiguration('gitpeek.baseBranch') && enabled()) void refresh()
   })
   context.subscriptions.push(onActiveEditor, onConfiguration,
+    { dispose() { disposed = true; clearWatchers(); clearState(''); } },
+    vscode.commands.registerCommand('gitpeek.chooseBaseBranch', chooseBase),
     vscode.commands.registerCommand('gitpeek.compareWithBase', async (uri?: vscode.Uri) => {
       if (!uri) return show()
       const repo = await repositories.forUri(uri)
@@ -373,6 +439,7 @@ export function registerBranchCompare(
 
   function createItems(summary: BranchCompareSummary): vscode.TreeItem[] {
     return [
+      Object.assign(treeItem('选择比较基准…', summary.base), { command: { command: 'gitpeek.chooseBaseBranch', title: '选择比较基准' } }),
       treeItem(`${summary.branch} 对比 ${summary.base} · ↑${summary.ahead} ↓${summary.behind}`),
       treeItem(`提交 (${summary.commits.length})`),
       ...summary.commits.map((commit) => {

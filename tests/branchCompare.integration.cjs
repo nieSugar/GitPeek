@@ -44,6 +44,9 @@ async function main() {
     await esbuild.build({ entryPoints: [join(__dirname, '..', 'src', 'git', 'GitService.ts')], bundle: true, platform: 'node', format: 'cjs', outfile: gitBundle })
     const watchers = []
     const subscriptions = []
+    const commands = new Map(), remembered = new Map()
+    let chooseBase
+    const workspaceState = { get: key => remembered.get(key), update: async (key, value) => { if (value === undefined) remembered.delete(key); else remembered.set(key, value) } }
     const disposable = { dispose() {} }
     const vscode = {
       EventEmitter: class {
@@ -61,7 +64,7 @@ async function main() {
         tabGroups: { activeTabGroup: {} },
         createStatusBarItem: () => ({ ...disposable, hide() {}, show() {} }),
         onDidChangeActiveTextEditor: () => disposable,
-        showQuickPick: async () => undefined,
+        showQuickPick: async (items, options) => options.title.startsWith('GitPeek：选择比较基准') ? chooseBase?.(items) : undefined,
         showErrorMessage: async message => { assert.fail(message) },
       },
       workspace: {
@@ -80,7 +83,7 @@ async function main() {
           return watcher
         },
       },
-      commands: { registerCommand: () => disposable },
+      commands: { registerCommand: (name, callback) => { commands.set(name, callback); return disposable } },
     }
     const originalLoad = Module._load
     Module._load = function (request, parent, isMain) {
@@ -134,7 +137,7 @@ async function main() {
       finally { restore() }
     }
 
-    const feature = registerBranchCompare({ subscriptions }, gitService, { pickRepository: async () => repo }, async () => {})
+    const feature = registerBranchCompare({ subscriptions, workspaceState }, gitService, { pickRepository: async () => repo }, async () => {})
     await feature.show(repo)
     const refsPath = realpathSync.native(resolve(repoRoot, git(repoRoot, 'rev-parse', '--git-path', 'refs')))
     const refsWatcher = watchers.find(watcher => realpathSync.native(watcher.pattern.baseUri.fsPath) === refsPath)
@@ -157,7 +160,47 @@ async function main() {
     assert.ok(refsWatcher.disposed, 'changing repository clears old watchers')
     assert.ok(watchers.some(watcher => !watcher.disposed && realpathSync.native(watcher.pattern.baseUri.fsPath) === refsPath && watcher.pattern.pattern === '**/*'),
       'linked worktrees watch their shared refs directory')
+    chooseBase = items => items.find(item => item.ref === 'refs/heads/feature')
+    await commands.get('gitpeek.chooseBaseBranch')()
+    assert.equal(feature.summary.base, 'refs/heads/feature')
+    await feature.show(repo)
+    assert.equal(feature.summary.base, 'origin/main', 'another repository retains its configured default')
+    chooseBase = items => items.find(item => item.ref === 'refs/heads/main')
+    await commands.get('gitpeek.chooseBaseBranch')()
+    assert.equal(feature.summary.base, 'refs/heads/main')
+    await feature.show({ root: worktreeRoot, id: 'linked-worktree' })
+    assert.equal(feature.summary.base, 'refs/heads/feature', 'the linked worktree keeps its own last selection')
+    chooseBase = items => items.find(item => item.ref === undefined)
+    await commands.get('gitpeek.chooseBaseBranch')()
+    assert.equal(feature.summary.base, 'origin/main', 'clearing remembered selection returns to configuration')
+    const pendingPick = commands.get('gitpeek.chooseBaseBranch')()
+    chooseBase = async items => { await feature.show(repo); return items.find(item => item.ref === 'refs/heads/feature') }
+    await pendingPick
+    assert.equal(feature.summary.repo.root, repoRoot, 'a stale base picker cannot replace a newer repository')
+    assert.equal(feature.summary.base, 'refs/heads/main')
+    const originalCompare = gitService.compare.bind(gitService)
+    let release, capturedSignal, blockNext = true
+    gitService.compare = async (...args) => {
+      if (blockNext) {
+        blockNext = false; capturedSignal = args[3]
+        await new Promise(resolve => { release = resolve })
+        capturedSignal.throwIfAborted()
+      }
+      return originalCompare(...args)
+    }
+    const abandoned = feature.refresh()
+    while (!release) await new Promise(resolve => setTimeout(resolve, 10))
+    const latest = feature.refresh()
+    assert.equal(capturedSignal.aborted, true, 'starting a newer query aborts the old read-only query')
+    release(); await Promise.all([abandoned, latest])
+    assert.equal(feature.summary.base, 'refs/heads/main', 'the abandoned result cannot overwrite the current selection')
+    blockNext = true; release = undefined
+    const closing = feature.refresh()
+    while (!release) await new Promise(resolve => setTimeout(resolve, 10))
     for (const subscription of subscriptions) subscription.dispose()
+    assert.equal(capturedSignal.aborted, true, 'disposal aborts pending comparisons')
+    release(); await closing
+    assert.equal(feature.summary, undefined)
 
     git(repoRoot, 'checkout', '--orphan', 'unrelated')
     writeFileSync(join(repoRoot, 'unrelated.txt'), 'no shared history\n', 'utf8')

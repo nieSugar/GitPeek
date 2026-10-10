@@ -11,6 +11,8 @@ import { listHistoryFiles, listHistoryReferences, resolveHistoryReference } from
 const DEFAULT_LIMIT = 20;
 const PAGE_SIZE = 20;
 const CACHE_TTL = 60_000;
+const STATE_KEY = 'gitpeek.investigation.history.v1';
+const SAVED_TRAIL_LIMIT = 20;
 type HistorySnapshot = Pick<FileRevisionContext, 'historyHead' | 'historyFile'>;
 type ShowDiff = (repo: Repository, hash: string, file: string, workspacePath?: string, history?: HistorySnapshot) => void | Promise<void>;
 type HistoryItem = vscode.TreeItem;
@@ -33,11 +35,12 @@ export class FileHistoryService {
   private readonly cache = new Map<string, { expires: number; limit: number; commits: FileHistoryCommit[]; hasMore: boolean }>();
   constructor(private readonly git: GitService) {}
 
-  async load(repo: Repository, file: string, limit = DEFAULT_LIMIT, ref = 'HEAD'): Promise<HistoryPage> {
+  async load(repo: Repository, file: string, limit = DEFAULT_LIMIT, ref = 'HEAD', signal?: AbortSignal): Promise<HistoryPage> {
     const count = Math.max(1, Math.floor(limit));
     let head: string;
-    try { head = await resolveHistoryReference(this.git, repo, ref); }
+    try { head = await resolveHistoryReference(this.git, repo, ref, signal); }
     catch (error) {
+      if (signal?.aborted) throw error;
       if (ref === 'HEAD') return { commits: [], hasMore: false };
       throw error;
     }
@@ -46,7 +49,8 @@ export class FileHistoryService {
     if (cached && cached.expires > Date.now() && cached.limit >= count) {
       return { head, commits: cached.commits.slice(0, count), hasMore: cached.commits.length > count || cached.hasMore };
     }
-    const all = await this.git.history(repo, file, count + 1, head);
+    const all = await this.git.history(repo, file, count + 1, head, signal);
+    signal?.throwIfAborted();
     const commits = all.slice(0, count), hasMore = all.length > count;
     this.cache.set(key, { expires: Date.now() + CACHE_TTL, limit: count, commits, hasMore });
     if (this.cache.size > 100) this.cache.delete(this.cache.keys().next().value!);
@@ -72,15 +76,31 @@ export async function registerHistory(context: vscode.ExtensionContext, git: Git
   const vscode = await import('vscode');
   const service = new FileHistoryService(git);
   const changed = new vscode.EventEmitter<HistoryItem | undefined>();
-  // shortcut: Keep 50 contexts in this window; persist sessions when cross-restart recovery is needed.
   const trail: Investigation[] = [];
   let cursor = -1, generation = 0, editorGeneration = 0, pinned = false;
   let active: Investigation | undefined;
+  let query: { request: number; controller: AbortController; result: Promise<HistoryItem[]> } | undefined;
+  let scopeQuery: AbortController | undefined;
+  let restoring = true;
   const watchers = new Set<string>();
   const enabled = () => vscode.workspace.getConfiguration('gitpeek').get<boolean>('enabled', true);
   const initialLimit = () => Math.max(1, vscode.workspace.getConfiguration('gitpeek.history').get<number>('limit', DEFAULT_LIMIT));
   const sameRepo = (a: Repository, b: Repository) => a.id === b.id && path.relative(a.root, b.root) === '';
   const sameTarget = (a: Investigation, b: Investigation) => sameRepo(a.repo, b.repo) && a.file === b.file && a.ref === b.ref;
+  const persist = () => {
+    if (restoring || !context.workspaceState) return;
+    const objects = trail.filter(item => item.head), index = objects.indexOf(active!);
+    const start = Math.max(0, Math.min(index < 0 ? objects.length : index, objects.length - SAVED_TRAIL_LIMIT));
+    const saved = objects.slice(start, start + SAVED_TRAIL_LIMIT);
+    void context.workspaceState.update(STATE_KEY, { version: 1, pinned, cursor: saved.indexOf(active!), trail: saved.map(item => ({
+      ...item, repo: { root: item.repo.root, id: item.repo.id }, ref: item.head, limit: Math.min(item.limit, 2000),
+    })) });
+  };
+  const invalidate = () => {
+    generation++;
+    query?.controller.abort(); query = undefined;
+    scopeQuery?.abort(); scopeQuery = undefined;
+  };
   const referenceLabel = (ref: string) => ref === 'HEAD' ? '当前分支' : /^[0-9a-f]{40,64}$/i.test(ref) ? ref.slice(0, 8)
     : ref.replace(/^refs\/heads\//, '').replace(/^refs\/remotes\//, '远程：').replace(/^refs\/tags\//, '标签：');
   const updateContext = () => {
@@ -90,9 +110,9 @@ export async function registerHistory(context: vscode.ExtensionContext, git: Git
     void vscode.commands.executeCommand('setContext', 'gitpeek.historyCanGoForward', cursor >= 0 && cursor < trail.length - 1);
   };
   const announce = () => {
-    generation++;
+    invalidate();
     view.description = active ? `${referenceLabel(active.ref)}${pinned ? ' · 已固定' : ''}` : undefined;
-    updateContext(); changed.fire(undefined);
+    updateContext(); changed.fire(undefined); persist();
   };
   const visit = (target: Investigation) => {
     if (active && sameTarget(active, target) && (!target.head || target.head === active.head)) return;
@@ -121,42 +141,44 @@ export async function registerHistory(context: vscode.ExtensionContext, git: Git
         workspacePath: value.workspacePath as string | undefined, limit: initialLimit() };
     } catch { return undefined; }
   };
-  const watchRepository = async (repo: Repository): Promise<void> => {
+  const watchRepository = async (repo: Repository, signal: AbortSignal): Promise<void> => {
     const key = `${repo.id}\0${repo.root}`;
     if (watchers.has(key)) return;
     watchers.add(key);
     let paths: string[];
     try {
       paths = await Promise.all(['HEAD', 'packed-refs', 'refs', 'logs/HEAD'].map(async gitPath =>
-        path.resolve(repo.root, (await git.run(repo, ['rev-parse', '--git-path', gitPath])).trim())));
-    } catch { watchers.delete(key); return; }
+        path.resolve(repo.root, (await git.run(repo, ['rev-parse', '--git-path', gitPath], { signal })).trim())));
+      signal.throwIfAborted();
+    } catch (error) { watchers.delete(key); if (signal.aborted) throw error; return; }
     for (const watchedPath of paths) {
       const refsDirectory = path.basename(watchedPath) === 'refs';
       const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(
         vscode.Uri.file(refsDirectory ? watchedPath : path.dirname(watchedPath)), refsDirectory ? '**/*' : path.basename(watchedPath),
       ));
-      const invalidate = () => {
+      const changedRefs = () => {
         service.invalidate(repo.id);
-        if (active && sameRepo(active.repo, repo)) { generation++; changed.fire(undefined); }
+        if (active && sameRepo(active.repo, repo)) { invalidate(); changed.fire(undefined); }
       };
-      watcher.onDidChange(invalidate); watcher.onDidCreate(invalidate); watcher.onDidDelete(invalidate);
+      watcher.onDidChange(changedRefs); watcher.onDidCreate(changedRefs); watcher.onDidDelete(changedRefs);
       context.subscriptions.push(watcher);
     }
   };
-  const loadRows = async (): Promise<HistoryItem[]> => {
+  const buildRows = async (signal: AbortSignal): Promise<HistoryItem[]> => {
     const target = active, request = generation;
     if (!enabled()) return [message(vscode, 'GitPeek 已在设置中禁用。')];
     if (!target) return [message(vscode, '打开一个文件以查看其历史。')];
     try {
-      await watchRepository(target.repo);
+      await watchRepository(target.repo, signal);
       if (request !== generation) return [];
       const snapshot = pinned || target.ref !== 'HEAD';
-      const page = await service.load(target.repo, target.file, target.limit, snapshot ? target.head ?? target.ref : 'HEAD');
+      const page = await service.load(target.repo, target.file, target.limit, snapshot ? target.head ?? target.ref : 'HEAD', signal);
       const workspacePath = snapshot && page.head
-        ? (await resolveWorkspacePaths(git, target.repo, page.head, [{ path: target.file, status: 'M' }])).get(target.file)
+        ? (await resolveWorkspacePaths(git, target.repo, page.head, [{ path: target.file, status: 'M' }], signal)).get(target.file)
         : target.workspacePath;
       if (request !== generation || target !== active || !enabled()) return [];
       target.head = page.head;
+      persist();
       const fileTarget = { repo: target.repo, path: workspacePath ?? target.file, workspacePathKnown: Boolean(workspacePath) };
       const scope = `${referenceLabel(target.ref)}${page.head ? ` · ${page.head.slice(0, 8)}` : ''}${pinned ? ' · 已固定' : ''}`;
       const rows: HistoryItem[] = [Object.assign(message(vscode, target.file), {
@@ -174,7 +196,15 @@ export async function registerHistory(context: vscode.ExtensionContext, git: Git
       if (!page.commits.length) rows.push(message(vscode, '此文件在所选版本没有提交记录。'));
       else if (page.hasMore) rows.push(moreItem(vscode, target, generation));
       return rows;
-    } catch (error) { return request === generation ? [message(vscode, `无法加载文件历史：${String(error)}`)] : []; }
+    } catch (error) { return !signal.aborted && request === generation ? [message(vscode, `无法加载文件历史：${String(error)}`)] : []; }
+  };
+  const loadRows = (): Promise<HistoryItem[]> => {
+    if (query?.request === generation) return query.result;
+    query?.controller.abort();
+    const controller = new AbortController();
+    const result = buildRows(controller.signal);
+    query = { request: generation, controller, result };
+    return result;
   };
   const provider: vscode.TreeDataProvider<HistoryItem> = {
     onDidChangeTreeData: changed.event, getTreeItem: item => item, getParent: () => undefined,
@@ -199,17 +229,20 @@ export async function registerHistory(context: vscode.ExtensionContext, git: Git
   };
   const refresh = (): void => {
     service.invalidate();
-    if (active) active.head = undefined;
+    if (active && !pinned && active.ref === 'HEAD') active.head = undefined;
     announce();
   };
   const chooseScope = async (chooseFile = false) => {
     if (!enabled() || !active) return;
     const origin = active, request = generation, editorRequest = ++editorGeneration;
+    scopeQuery?.abort();
+    const controller = scopeQuery = new AbortController();
+    const signal = controller.signal;
     const current = () => enabled() && request === generation && editorRequest === editorGeneration && active === origin;
     try {
       let ref = origin.ref;
       if (!chooseFile) {
-        const references = await listHistoryReferences(git, origin.repo);
+        const references = await listHistoryReferences(git, origin.repo, signal);
         if (!current()) return;
         const choice = await vscode.window.showQuickPick([
           { ref: 'HEAD', label: '跟随当前分支', description: 'HEAD' }, ...references,
@@ -220,13 +253,13 @@ export async function registerHistory(context: vscode.ExtensionContext, git: Git
         if (!entered || !current()) return;
         ref = entered;
       }
-      const head = chooseFile && origin.head ? origin.head : await resolveHistoryReference(git, origin.repo, ref);
-      const files = await listHistoryFiles(git, origin.repo, head);
+      const head = chooseFile && origin.head ? origin.head : await resolveHistoryReference(git, origin.repo, ref, signal);
+      const files = await listHistoryFiles(git, origin.repo, head, signal);
       if (!current()) return;
       let file = origin.file;
       if (chooseFile || !files.includes(file)) {
         const choices = files.map(file => ({ label: file, file, description: '' }));
-        if (!chooseFile && (await git.history(origin.repo, file, 1, head)).length) {
+        if (!chooseFile && (await git.history(origin.repo, file, 1, head, signal)).length) {
           choices.unshift({ label: file, file, description: '原路径已不存在，查看删除或重命名前的历史' });
         }
         if (!current()) return;
@@ -243,7 +276,7 @@ export async function registerHistory(context: vscode.ExtensionContext, git: Git
       editorGeneration++; visit(target); announce();
       await vscode.commands.executeCommand('gitpeek.fileHistory.focus');
       await restoreSelection();
-    } catch (error) { if (current()) await vscode.window.showErrorMessage(`GitPeek：无法切换调查范围：${String(error)}`); }
+    } catch (error) { if (!signal.aborted && current()) await vscode.window.showErrorMessage(`GitPeek：无法切换调查范围：${String(error)}`); }
   };
   const move = async (direction: number) => {
     const next = cursor + direction;
@@ -263,12 +296,12 @@ export async function registerHistory(context: vscode.ExtensionContext, git: Git
   context.subscriptions.push(changed, view,
     view.onDidChangeSelection(event => {
       const [repo, hash, , , snapshot] = event.selection[0]?.command?.arguments ?? [];
-      if (active && repo && sameRepo(active.repo, repo) && snapshot?.historyHead === active.head && snapshot.historyFile === active.file) active.selectedHash = hash;
+      if (active && repo && sameRepo(active.repo, repo) && snapshot?.historyHead === active.head && snapshot.historyFile === active.file) { active.selectedHash = hash; persist(); }
     }),
     vscode.window.onDidChangeActiveTextEditor(followEditor),
-    vscode.window.onDidChangeWindowState(event => { if (event.focused) { generation++; changed.fire(undefined); } }),
+    vscode.window.onDidChangeWindowState(event => { if (event.focused) { invalidate(); changed.fire(undefined); } }),
     vscode.workspace.onDidSaveTextDocument(document => {
-      if (active?.workspacePath && document.uri.fsPath === path.resolve(active.repo.root, active.workspacePath)) { generation++; changed.fire(undefined); }
+      if (active?.workspacePath && document.uri.fsPath === path.resolve(active.repo.root, active.workspacePath)) { invalidate(); changed.fire(undefined); }
     }),
     vscode.workspace.onDidChangeConfiguration(async event => {
       if (event.affectsConfiguration('gitpeek.enabled')) {
@@ -300,14 +333,59 @@ export async function registerHistory(context: vscode.ExtensionContext, git: Git
     vscode.commands.registerCommand('gitpeek.internal.fileHistory.back', () => move(-1)),
     vscode.commands.registerCommand('gitpeek.internal.fileHistory.forward', () => move(1)),
   );
+  context.subscriptions.push({ dispose: invalidate });
+  if (view.onDidChangeVisibility) context.subscriptions.push(view.onDidChangeVisibility(() => { invalidate(); changed.fire(undefined); }));
   if (showDiff) context.subscriptions.push(vscode.commands.registerCommand('gitpeek.internal.fileHistory.showDiff',
     async (repo: Repository, hash: string, file: string, workspacePath?: string, history?: HistorySnapshot) => {
       if (!enabled()) return;
-      if (active && sameRepo(active.repo, repo) && history?.historyFile === active.file && history.historyHead === active.head) active.selectedHash = hash;
+      if (active && sameRepo(active.repo, repo) && history?.historyFile === active.file && history.historyHead === active.head) { active.selectedHash = hash; persist(); }
       await showDiff(repo, hash, file, workspacePath, history);
     }));
-  await followEditor(vscode.window.activeTextEditor);
+  const startup = editorGeneration;
+  const stored = context.workspaceState?.get<{ version: number; pinned: boolean; cursor: number; trail: Investigation[] }>(STATE_KEY);
+  let invalid = 0;
+  if (stored) {
+    if (stored.version !== 1 || !Array.isArray(stored.trail) || stored.trail.length > SAVED_TRAIL_LIMIT
+      || typeof stored.pinned !== 'boolean' || !Number.isInteger(stored.cursor) || stored.cursor < -1 || stored.cursor >= stored.trail.length) invalid++;
+    else {
+      const restored: Array<Investigation | undefined> = [];
+      for (const saved of stored.trail) {
+        try {
+          if (!saved || !saved.repo || typeof saved.repo.id !== 'string' || typeof saved.repo.root !== 'string'
+            || !path.isAbsolute(saved.repo.root) || saved.repo.root.includes('\0') || !validFile(saved.file)
+            || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(saved.head ?? '') || saved.ref !== saved.head
+            || !Number.isInteger(saved.limit) || saved.limit < 1 || saved.limit > 2000
+            || (saved.workspacePath !== undefined && !validFile(saved.workspacePath))
+            || (saved.selectedHash !== undefined && !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(saved.selectedHash))) throw new Error();
+          const belongsToWorkspace = (vscode.workspace.workspaceFolders ?? []).some(folder => {
+            const relative = path.relative(folder.uri.fsPath, saved.repo.root), reverse = path.relative(saved.repo.root, folder.uri.fsPath);
+            const within = (value: string) => !path.isAbsolute(value) && value !== '..' && !value.startsWith(`..${path.sep}`);
+            return within(relative) || within(reverse);
+          });
+          if (!belongsToWorkspace) throw new Error();
+          const repo = await repositories.forUri(vscode.Uri.file(saved.repo.root));
+          if (!repo || !sameRepo(repo, saved.repo)) throw new Error();
+          const page = await service.load(repo, saved.file, saved.limit, saved.head);
+          if (!page.commits.length) throw new Error();
+          const target = { ...saved, repo };
+          if (target.selectedHash && !page.commits.some(commit => commit.hash === target.selectedHash)) { target.selectedHash = undefined; invalid++; }
+          restored.push(target);
+        } catch { restored.push(undefined); invalid++; }
+        if (startup !== editorGeneration) break;
+      }
+      if (startup === editorGeneration) {
+        trail.push(...restored.filter((item): item is Investigation => Boolean(item)));
+        const selected = restored[stored.cursor];
+        cursor = selected ? trail.indexOf(selected) : trail.length - 1;
+        if (stored.pinned && selected) { active = selected; pinned = true; announce(); }
+      }
+    }
+  }
+  restoring = false;
+  if (invalid) await vscode.window.showInformationMessage(`GitPeek：${invalid} 个已保存的调查对象已失效，未恢复；请重新选择仓库、提交或文件。`);
+  if (startup === editorGeneration) await followEditor(vscode.window.activeTextEditor);
   updateContext();
+  if (pinned && active?.selectedHash) await restoreSelection();
   return { provider, show, refresh };
 }
 

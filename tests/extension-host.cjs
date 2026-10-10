@@ -14,6 +14,9 @@ const PUBLIC_COMMANDS = [
   'gitpeek.selectionHistory',
   'gitpeek.compareWithBase',
   'gitpeek.showBranchChanges',
+  'gitpeek.chooseBaseBranch',
+  'gitpeek.showConflicts',
+  'gitpeek.rebaseBackups',
   'gitpeek.reviewChanges',
   'gitpeek.generateCommitMessage',
   'gitpeek.refresh',
@@ -70,6 +73,12 @@ module.exports.run = async function run(options = {}) {
   }
   if (workspaceRoots.length === 1 && vscode.TabInputWebview) {
     await vscode.commands.executeCommand('gitpeek.showCommitGraph');
+    const graphOpen = () => {
+      const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+      return input instanceof vscode.TabInputWebview && ['gitpeek.commitGraph', 'mainThreadWebview-gitpeek.commitGraph'].includes(input.viewType);
+    };
+    const deadline = Date.now() + 5000;
+    while (!graphOpen() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
     const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
     if (!(input instanceof vscode.TabInputWebview) || !['gitpeek.commitGraph', 'mainThreadWebview-gitpeek.commitGraph'].includes(input.viewType)) {
       throw new Error('GitPeek Commit Graph did not open in an editor tab.');
