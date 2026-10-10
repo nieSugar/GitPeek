@@ -84,7 +84,7 @@ Windows 10.0.26200 x64、Intel Core i7-14700KF、Node v24.14.1、Git 2.54.0.wind
 - 冲突与恢复：增加 `gitpeek.showConflicts`、`gitpeek.rebaseBackups`。真实 Git 覆盖 Rebase、Merge、Cherry-pick 冲突及外部 Rebase 所有权；备份比较固定 HEAD 与备份 Hash，恢复只创建分支，覆盖脏工作区／index 保留、快照变化和无效名称。现有 Rebase 集成测试扩展为 17 个场景；界面模拟覆盖原生 Merge Editor／Diff／SCM 入口及继续／中止确认。
 - 取消：GitService 支持显式 `AbortSignal`，提交图、文件历史、提交详情、分支和自由比较查询传入信号；条件变更、仓库切换、隐藏／关闭和禁用保留对应过期结果检查。真实子进程验证取消停止进程；不向 Git 写操作传入自动取消信号。
 - 恢复：仅保存固定 Hash、仓库、历史路径、选中提交和最多 20 个调查对象，分页保存上限 2,000。覆盖启动前读取树、较早固定对象被轨迹裁剪、取消 watcher 初始化、新操作覆盖启动恢复、无效路径／Hash／仓库。使用同一隔离 VS Code 配置完整退出再启动，固定文件历史、固定提交详情、选中提交和比较基准恢复通过。
-- 全量测试 34 个文件通过；类型检查、构建及 VSIX 打包通过。保留 manifest 版本 0.7.1，本轮内容记录于 Unreleased，未发布、未提交或推送。
+- 全量测试 34 个文件通过；类型检查、构建及 VSIX 打包通过。实现验收阶段保留 manifest 版本 0.7.1，内容记录于 Unreleased；当时未发布、未提交或推送。用户随后授权提交、推送和发布，本轮升级为 0.8.0。
 
 Windows 原生操作记录位于 `.vscode-test/todo-validation/1791617220130/first.json` 和 `restart.json`，使用普通隔离配置完整退出、重新启动，未安装到日常配置。覆盖扩展激活、20 个公开命令和上述原生操作；不等于人工鼠标／视觉验收，也未覆盖 macOS／Linux 的实际界面。冲突界面的人工操作尚未验收。验收包为 `.vscode-test/todo-validation/gitpeek-0.7.1-local-todo.vsix`。
 
@@ -111,3 +111,10 @@ npm run benchmark:large -- 20000 5 "D:\Microsoft VS Code\Code.exe"
 原始结果分别记录数据查询、消息传输到 Webview 绘制、DOM 节点、Webview JS heap、所在 Extension Host 的 RSS 和 CPU。样本中 Extension Host 采样峰值约 217～270 MiB；这是承载测试的进程占用，不能单独归因于 GitPeek。资源测量不包含 Git 子进程树、VS Code 主窗口或 GPU；耗时不包含启动、头像网络加载或手动点击延迟。暖缓存的 5 次样本不代表冷缓存、复杂项目或长时间使用情况，也没有 GitLens 同机对照。
 
 本样本默认 100 条提交分页没有显示需要立即引入虚拟列表或增量渲染的证据，本轮保留现有分页。后续在实际仓库出现长时间加载、大量连续加载或明显界面阻塞时，应复测对应条件，再选择优化范围。
+
+## 2026-10-10 v0.8.0 发布准备
+
+- 功能提交：`c9ae61b feat(git): 完善本地代码调查、快照比较与恢复体验`。
+- 同步 manifest、lockfile 与更新日志版本为 0.8.0，更新当前安装说明；0.7.1 验收包及历史性能记录保留。
+- 通过 `v0.8.0` 标签触发现有 Release 工作流，重新验证标签提交并生成正式 VSIX；正式安装包见 [GitHub Release](https://github.com/nieSugar/GitPeek/releases/tag/v0.8.0)。
+- GitHub Release 与 Marketplace 发布分别核验；准备阶段发现仓库缺少 `VSCE_PAT`，商店上架须使用有效 Publisher 登录或补齐发布凭证，不将生成 GitHub 安装包视为商店发布成功。

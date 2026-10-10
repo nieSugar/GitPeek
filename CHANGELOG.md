@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-10
+
 - Stash 预览文件直达原生 Diff，正确使用已跟踪、未跟踪、删除、重命名和二进制快照，预览保持只读。
 - 历史文件可与当前编辑器文本快照比较，支持未保存内容，未打开文件读取磁盘；保留路径身份校验。
 - 代码变化搜索按需列出命中文件，打开 Diff 并定位可核实的增删行，无法定位时明确说明原因。
@@ -71,7 +73,8 @@
 - 新增提交前更改审查，并根据已暂存文件的路径与状态生成提交信息候选，写入当前仓库的 SCM 输入框。
 - 提供中文界面与文档；修复暂存新文件、重命名历史差异及虚拟 Diff 编辑器的仓库上下文处理。
 
-[Unreleased]: https://github.com/nieSugar/GitPeek/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/nieSugar/GitPeek/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/nieSugar/GitPeek/releases/tag/v0.8.0
 [0.7.1]: https://github.com/nieSugar/GitPeek/releases/tag/v0.7.1
 [0.7.0]: https://github.com/nieSugar/GitPeek/releases/tag/v0.7.0
 [0.6.0]: https://github.com/nieSugar/GitPeek/releases/tag/v0.6.0
