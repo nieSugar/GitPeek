@@ -51,7 +51,7 @@ async function main() {
         activeTextEditor: undefined,
         tabGroups: { activeTabGroup: {} },
         onDidChangeActiveTextEditor: () => disposable, onDidChangeWindowState: () => disposable,
-        createWebviewPanel: () => panel, createTreeView: () => disposable,
+        createWebviewPanel: () => panel, createTreeView: () => ({ ...disposable, reveal: async () => {}, onDidChangeSelection: () => disposable }),
         createStatusBarItem: () => ({ ...disposable, hide() {}, show() {} }),
         showQuickPick: async items => { picks++; return typeof pickAnswer === 'function' ? pickAnswer(items) : pickAnswer; },
         showInformationMessage: async message => info.push(message),
@@ -82,7 +82,7 @@ async function main() {
     const feature = name => require(path.join(temp, 'features', `${name}.cjs`));
     const service = new GitService();
     const repositories = {
-      forUri: async value => [repoA, repoB].find(repo => value.fsPath.startsWith(repo.root + path.sep)),
+      forUri: async value => [repoA, repoB].find(repo => (value.fsPath === repo.root || value.fsPath.startsWith(repo.root + path.sep))),
       pickRepository: async () => selectedRepo,
     };
     const context = { subscriptions };
@@ -161,7 +161,7 @@ async function main() {
     const historyItem = (await history.provider.getChildren()).find(item => item.contextValue === 'gitpeek.historyCommit');
     assert.ok(historyItem);
     await run('gitpeek.internal.tree.openDiff', historyItem);
-    assert.deepEqual(opened.at(-1), ['historyDiff', repoB, hash, file, file]);
+    assert.deepEqual(opened.at(-1), ['historyDiff', repoB, hash, file, file, { historyHead: hash, historyFile: file }]);
     await run('gitpeek.internal.tree.showCommit', historyItem);
     assert.deepEqual(shown.at(-1), [repoB, hash]);
     await run('gitpeek.internal.tree.copyHash', historyItem);

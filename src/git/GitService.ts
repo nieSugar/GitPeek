@@ -49,8 +49,9 @@ export class GitService {
     return parseBlame(await this.run(repo, ['-c', 'core.quotePath=false', 'blame', '--line-porcelain', '--contents', '-', '--', file], { input: contents, timeoutMs: 10_000 }))
   }
 
-  async history(repo: Repository, file: string, limit = 20): Promise<FileHistoryCommit[]> {
-    return parseFileHistory(await this.run(repo, ['log', '--follow', '--name-only', '-z', `--max-count=${Math.max(1, Math.floor(limit))}`, '--date=iso-strict', '--pretty=format:%H%x1f%an%x1f%ae%x1f%ad%x1f%s%x00', '--', `:(literal)${file}`]))
+  async history(repo: Repository, file: string, limit = 20, head?: string): Promise<FileHistoryCommit[]> {
+    if (head !== undefined && !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(head)) throw new Error('文件历史的提交快照无效。')
+    return parseFileHistory(await this.run(repo, ['log', '--follow', '--name-only', '-z', `--max-count=${Math.max(1, Math.floor(limit))}`, '--date=iso-strict', '--pretty=format:%H%x1f%an%x1f%ae%x1f%ad%x1f%s%x00', ...(head ? [head] : []), '--', `:(literal)${file}`]))
   }
 
   async commit(repo: Repository, hash: string): Promise<CommitDetail> {

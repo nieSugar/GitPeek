@@ -22,12 +22,12 @@ const repo = { id: 'repo-1', root: path.resolve('历史 工作区') };
 const file = relativeHistoryPath(repo.root, path.join(repo.root, '中文 目录', 'a & b;[x].ts'));
 assert.equal(file, '中文 目录/a & b;[x].ts');
 
-let head = 'first-head';
+let head = 'a'.repeat(40);
 let now = 10_000;
 const queries = [];
 const git = {
   async run(_repo, args) {
-    assert.deepEqual(args, ['rev-parse', '--verify', 'HEAD']);
+    assert.deepEqual(args, ['rev-parse', '--verify', '--end-of-options', 'HEAD^{commit}']);
     return head;
   },
   async history(_repo, requestedFile, limit) {
@@ -50,7 +50,7 @@ try {
   assert.equal(smallerPage.hasMore, true);
   assert.equal(queries.length, 2);
 
-  head = 'second-head';
+  head = 'b'.repeat(40);
   await history.load(repo, file, 20);
   assert.equal(queries.length, 3, 'HEAD changes invalidate cached history');
   now += 60_001;

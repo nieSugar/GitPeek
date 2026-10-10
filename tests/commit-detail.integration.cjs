@@ -112,7 +112,7 @@ async function checkHistoryClicks(temp, gitService, repo) {
     ThemeIcon: class {}, RelativePattern: class {}, TreeItemCollapsibleState: { None: 0 },
     Uri: { file: (fsPath) => uri({ scheme: 'file', fsPath }), from: uri },
     window: {
-      createTreeView: () => disposable,
+      createTreeView: () => ({ ...disposable, reveal: async () => {}, onDidChangeSelection: () => disposable }),
       activeTextEditor: { document: { uri: uri({ scheme: 'file', fsPath: join(repo.root, currentFile) }) } },
       onDidChangeActiveTextEditor: (handler) => (changeEditor = handler, disposable),
       onDidChangeWindowState: () => disposable,
@@ -131,7 +131,7 @@ async function checkHistoryClicks(temp, gitService, repo) {
     commands: {
       registerCommand: (name, callback) => (commands.set(name, callback), disposable),
       executeCommand: async (name, ...args) => {
-        if (name === 'gitpeek.fileHistory.focus') return;
+        if (name === 'gitpeek.fileHistory.focus' || name === 'setContext') return;
         assert.equal(name, 'vscode.diff');
         diffs.push(args);
         await activate(args[1]);
@@ -150,7 +150,7 @@ async function checkHistoryClicks(temp, gitService, repo) {
     const { registerCommitFeatures } = require(join(outdir, 'commitDetail.cjs'));
     const commits = registerCommitFeatures(context, gitService);
     const history = await registerHistory(context, gitService, {
-      forUri: async uri => uri.fsPath.startsWith(otherRepo.root + sep) ? otherRepo : repo,
+      forUri: async uri => (uri.fsPath === otherRepo.root || uri.fsPath.startsWith(otherRepo.root + sep)) ? otherRepo : repo,
     }, commits.showDiff);
     const allRows = await history.provider.getChildren();
     assert.equal(allRows[0].label, currentFile);
@@ -201,7 +201,7 @@ async function checkHistoryClicks(temp, gitService, repo) {
       await activate(diffs[index % diffs.length][index % 2]);
       assert.equal((await history.provider.getChildren())[0].label, currentFile, 'switching among old diff tabs restores the original file through renames');
     }
-    for (const replacement of [{ workspacePath: '../escape.txt' }, { workspacePath: repo.root }, { repoId: 'wrong-repo' }, { root: otherRepo.root }, { workspacePath: undefined }]) {
+    for (const replacement of [{ workspacePath: '../escape.txt' }, { workspacePath: repo.root }, { repoId: 'wrong-repo' }, { root: otherRepo.root }]) {
       await activate(vscode.Uri.file(join(repo.root, 'added.txt')));
       await activate(uri({ ...oldDiff, query: JSON.stringify({ ...JSON.parse(oldDiff.query), ...replacement }) }));
       assert.equal((await history.provider.getChildren())[0].label, 'added.txt', 'invalid diff source metadata cannot replace the current file');

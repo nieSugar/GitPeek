@@ -27,7 +27,6 @@ export function registerSidebar<T>(
     vscode.window.createTreeView('gitpeek.repository', { treeDataProvider: sections.repository }),
     vscode.window.createTreeView('gitpeek.changes', { treeDataProvider: changes, canSelectMany: true }),
     vscode.window.createTreeView('gitpeek.branchChanges', { treeDataProvider: sections.branchChanges }),
-    vscode.window.createTreeView('gitpeek.fileHistory', { treeDataProvider: history.provider }),
   ];
   context.subscriptions.push(...views, ...Object.values(sections));
   context.subscriptions.push(

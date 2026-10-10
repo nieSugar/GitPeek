@@ -27,7 +27,7 @@
     "watch": "node esbuild.js --watch",
     "check": "tsc --noEmit",
     "benchmark": "node scripts/benchmark.cjs",
-    "test": "node --test tests/git-service.integration.cjs tests/blame.test.cjs tests/virtualEditor.test.cjs tests/fileHistory.test.mjs tests/commitGraph.integration.cjs tests/commitGraphView.test.cjs tests/checkoutCommit.integration.cjs tests/cherryPickCommit.integration.cjs tests/stashList.integration.cjs tests/stashSave.integration.cjs tests/stashApply.integration.cjs tests/stashDrop.integration.cjs tests/commit-detail.integration.cjs tests/branchCompare.integration.cjs tests/selectionOrigins.integration.cjs tests/reviewChanges.integration.cjs tests/smartCommit.test.mjs tests/contextMenus.test.cjs tests/workflows.integration.cjs tests/detailsCompare.regressions.cjs tests/historyStage.regressions.cjs tests/search-regressions.test.cjs tests/batchStage.integration.cjs tests/batchStageView.test.cjs tests/fileBlame.test.cjs tests/revisionNavigation.test.cjs tests/selectionSnapshot.integration.cjs tests/interactiveRebase.integration.cjs tests/rebaseEditor.test.cjs tests/comparisonLayout.test.cjs",
+    "test": "node --test tests/git-service.integration.cjs tests/blame.test.cjs tests/virtualEditor.test.cjs tests/fileHistory.test.mjs tests/commitGraph.integration.cjs tests/commitGraphView.test.cjs tests/checkoutCommit.integration.cjs tests/cherryPickCommit.integration.cjs tests/stashList.integration.cjs tests/stashSave.integration.cjs tests/stashApply.integration.cjs tests/stashDrop.integration.cjs tests/commit-detail.integration.cjs tests/branchCompare.integration.cjs tests/selectionOrigins.integration.cjs tests/reviewChanges.integration.cjs tests/smartCommit.test.mjs tests/contextMenus.test.cjs tests/workflows.integration.cjs tests/detailsCompare.regressions.cjs tests/historyStage.regressions.cjs tests/search-regressions.test.cjs tests/batchStage.integration.cjs tests/batchStageView.test.cjs tests/fileBlame.test.cjs tests/revisionNavigation.test.cjs tests/selectionSnapshot.integration.cjs tests/interactiveRebase.integration.cjs tests/rebaseEditor.test.cjs tests/comparisonLayout.test.cjs tests/historyReferences.integration.cjs tests/historyInvestigation.integration.cjs tests/historyLifecycle.test.cjs",
     "package": "npm run check && npm run compile && vsce package --no-dependencies"
   },
   "devDependencies": {
@@ -264,6 +264,48 @@
         "title": "GitPeek: 下一处文件修改",
         "icon": "$(arrow-right)",
         "enablement": "config.gitpeek.enabled"
+      },
+      {
+        "command": "gitpeek.internal.fileHistory.pin",
+        "title": "固定文件历史",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled && gitpeek.historyHasTarget",
+        "icon": "$(pin)"
+      },
+      {
+        "command": "gitpeek.internal.fileHistory.unpin",
+        "title": "跟随当前编辑器",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled && gitpeek.historyPinned",
+        "icon": "$(pinned)"
+      },
+      {
+        "command": "gitpeek.internal.fileHistory.chooseRef",
+        "title": "选择历史分支或引用",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled && gitpeek.historyHasTarget",
+        "icon": "$(git-branch)"
+      },
+      {
+        "command": "gitpeek.internal.fileHistory.chooseFile",
+        "title": "在当前版本中选择文件",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled && gitpeek.historyHasTarget",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "gitpeek.internal.fileHistory.back",
+        "title": "返回上一个调查对象",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled && gitpeek.historyCanGoBack",
+        "icon": "$(arrow-left)"
+      },
+      {
+        "command": "gitpeek.internal.fileHistory.forward",
+        "title": "前往下一个调查对象",
+        "category": "GitPeek",
+        "enablement": "config.gitpeek.enabled && gitpeek.historyCanGoForward",
+        "icon": "$(arrow-right)"
       }
     ],
     "viewsContainers": {
@@ -333,6 +375,36 @@
           "command": "gitpeek.internal.compare.clear",
           "when": "view == gitpeek.comparison",
           "group": "navigation@1"
+        },
+        {
+          "command": "gitpeek.internal.fileHistory.pin",
+          "when": "config.gitpeek.enabled && view == gitpeek.fileHistory && !gitpeek.historyPinned",
+          "group": "navigation@2"
+        },
+        {
+          "command": "gitpeek.internal.fileHistory.unpin",
+          "when": "config.gitpeek.enabled && view == gitpeek.fileHistory && gitpeek.historyPinned",
+          "group": "navigation@2"
+        },
+        {
+          "command": "gitpeek.internal.fileHistory.chooseRef",
+          "when": "config.gitpeek.enabled && view == gitpeek.fileHistory",
+          "group": "navigation@1"
+        },
+        {
+          "command": "gitpeek.internal.fileHistory.chooseFile",
+          "when": "config.gitpeek.enabled && view == gitpeek.fileHistory",
+          "group": "1_investigation@1"
+        },
+        {
+          "command": "gitpeek.internal.fileHistory.back",
+          "when": "config.gitpeek.enabled && view == gitpeek.fileHistory && gitpeek.historyCanGoBack",
+          "group": "navigation@3"
+        },
+        {
+          "command": "gitpeek.internal.fileHistory.forward",
+          "when": "config.gitpeek.enabled && view == gitpeek.fileHistory && gitpeek.historyCanGoForward",
+          "group": "navigation@4"
         }
       ],
       "editor/title": [
@@ -496,6 +568,30 @@
         {
           "command": "gitpeek.nextFileRevision",
           "when": "config.gitpeek.enabled && resourceScheme == gitpeek-commit"
+        },
+        {
+          "command": "gitpeek.internal.fileHistory.pin",
+          "when": "false"
+        },
+        {
+          "command": "gitpeek.internal.fileHistory.unpin",
+          "when": "false"
+        },
+        {
+          "command": "gitpeek.internal.fileHistory.chooseRef",
+          "when": "false"
+        },
+        {
+          "command": "gitpeek.internal.fileHistory.chooseFile",
+          "when": "false"
+        },
+        {
+          "command": "gitpeek.internal.fileHistory.back",
+          "when": "false"
+        },
+        {
+          "command": "gitpeek.internal.fileHistory.forward",
+          "when": "false"
         }
       ],
       "view/item/context": [
