@@ -100,9 +100,11 @@ code --install-extension gitpeek-0.7.0.vsix
 
 每次推送分支或创建 Pull Request，GitHub Actions 都会在 Windows 和 Linux 上运行测试、类型检查并生成 VSIX，可从对应 CI 运行的 Artifacts 下载。正式版本安装包见 [GitHub Releases](https://github.com/nieSugar/GitPeek/releases)。
 
-发布新版本时，同步更新 `package.json` 与 `package-lock.json` 的版本号，提交并推送后，为该提交创建相同版本的标签（例如 `v0.7.0`），再推送标签。Release 工作流会检出标签对应的代码，核对版本、运行测试并打包，将 VSIX 附加到 GitHub Release。
+发布新版本时，同步更新 `package.json` 与 `package-lock.json` 的版本号，提交并推送后，为该提交创建相同版本的标签（例如 `v0.7.0`），再推送标签。Release 工作流会检出标签对应的代码，核对版本、运行测试并打包，将同一份 VSIX 附加到 GitHub Release 并发布到 VS Code Marketplace。
 
-补发历史版本：先将版本标签指向该版本的历史提交并推送，再在 Actions → Release → Run workflow 中选择 `main`，填写对应标签。手动补发不会把旧版设为 Latest；已有同名安装包会保留。
+Marketplace 首次配置：在 GitHub 仓库 Settings → Secrets and variables → Actions 中添加 `VSCE_PAT` Secret，值为具备 `gitpeek` Publisher 发布权限和 Marketplace → Manage scope 的 Azure DevOps PAT。缺少 Secret 时，商店发布步骤会明确失败。Global PAT 将于 2026-12-01 退役，届时需改用 Microsoft Entra ID 认证，见 [VS Code 官方发布说明](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#secure-automated-publishing-to-visual-studio-marketplace)。
+
+补发历史版本：先将版本标签指向该版本的历史提交并推送，再在 Actions → Release → Run workflow 中选择 `main`，填写对应标签。手动补发不会把旧版设为 Latest；已有同名安装包会保留，默认不发布到 Marketplace。若只需重试某个版本的商店发布，在同一入口勾选 `publish_marketplace`；工作流会重新验证、打包，并跳过商店中已存在的相同版本。
 
 本轮新增整文件归属、历史版本导航、编辑中选区追溯和交互式 Rebase，以 v0.7.0 发布。历史版本 v0.1.0～v0.6.0 使用各自验收提交补发。
 

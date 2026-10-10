@@ -9,6 +9,10 @@ on:
         description: 'Existing version tag to package, for example v0.6.0'
         required: true
         type: string
+      publish_marketplace:
+        description: 'Also publish this version to VS Code Marketplace'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -71,3 +75,16 @@ jobs:
           else
             gh release create "$RELEASE_TAG" "$vsix" --verify-tag --title "GitPeek $RELEASE_TAG" --generate-notes
           fi
+      - name: Publish VS Code Marketplace
+        if: github.event_name == 'push' || inputs.publish_marketplace
+        shell: bash
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [[ -z "$VSCE_PAT" ]]; then
+            echo "::error::Add the VSCE_PAT repository secret before publishing to Marketplace."
+            exit 1
+          fi
+          vsix="gitpeek-${RELEASE_TAG#v}.vsix"
+          test -f "$vsix"
+          npx --no-install vsce publish --packagePath "$vsix" --skip-duplicate
