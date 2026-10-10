@@ -13,6 +13,10 @@ on:
         description: 'Also publish this version to VS Code Marketplace'
         type: boolean
         default: false
+      publish_openvsx:
+        description: 'Also publish this version to Open VSX'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -50,11 +54,6 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run package
-      - uses: actions/upload-artifact@v7.0.2
-        with:
-          name: gitpeek-${{ env.RELEASE_TAG }}
-          path: gitpeek-*.vsix
-          if-no-files-found: error
       - name: Publish GitHub Release
         shell: bash
         env:
@@ -66,7 +65,8 @@ jobs:
           test -f "$vsix"
           if gh release view "$RELEASE_TAG" --json tagName > /dev/null 2>&1; then
             if gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | grep -Fxq "$vsix"; then
-              echo "Release already contains $vsix; keeping the existing asset."
+              echo "Release already contains $vsix; reusing the existing asset."
+              gh release download "$RELEASE_TAG" --pattern "$vsix" --clobber
             else
               gh release upload "$RELEASE_TAG" "$vsix"
             fi
@@ -75,8 +75,35 @@ jobs:
           else
             gh release create "$RELEASE_TAG" "$vsix" --verify-tag --title "GitPeek $RELEASE_TAG" --generate-notes
           fi
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gitpeek-${{ env.RELEASE_TAG }}
+          path: gitpeek-*.vsix
+          if-no-files-found: error
+
+  marketplace:
+    if: github.event_name == 'push' || inputs.publish_marketplace
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: gitpeek-${{ env.RELEASE_TAG }}
       - name: Publish VS Code Marketplace
-        if: github.event_name == 'push' || inputs.publish_marketplace
         shell: bash
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
@@ -88,3 +115,26 @@ jobs:
           vsix="gitpeek-${RELEASE_TAG#v}.vsix"
           test -f "$vsix"
           npx --no-install vsce publish --packagePath "$vsix" --skip-duplicate
+
+  open_vsx:
+    if: github.event_name == 'push' || inputs.publish_openvsx
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      id-token: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: gitpeek-${{ env.RELEASE_TAG }}
+      - name: Publish Open VSX
+        shell: bash
+        run: |
+          vsix="gitpeek-${RELEASE_TAG#v}.vsix"
+          test -f "$vsix"
+          npx --yes ovsx@1.2.0 publish "$vsix" --trusted-publishing --skip-duplicate
