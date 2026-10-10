@@ -125,4 +125,6 @@ npm run benchmark:large -- 20000 5 "D:\Microsoft VS Code\Code.exe"
 - Release 的构建／GitHub 发布、Marketplace 和 Open VSX 分为独立任务；两家商店只依赖构建任务，消费同一 artifact，互不阻塞。补发时下载并复用现有 GitHub Release 资产，不覆盖旧安装包或版本标签。
 - Open VSX 使用固定 `ovsx@1.2.0`、OIDC 和 `--skip-duplicate`；长期 PAT 不进入代码或仓库 Secret。补发输入 `publish_openvsx` 默认关闭，标签发布自动开启。
 - 本地 6 项发布流程检查通过，覆盖任务与权限隔离、同一包传递、旧包复用、补发 Latest 行为和下载失败。已通过真实 CLI 帮助核对参数。
-- 首次发布仍需 Eclipse 账号、Publisher Agreement、命名空间权限及一个有效版本；Trusted Publisher 登记还要求 Owner 权限。当前账号显示尚未签约，已打开注册页面等待本人完成，尚未将 Open VSX 发布或 OIDC 实际运行记为成功。
+- 工作流提交 `9c95e39` 已推送到 main 与工作分支，Windows／Linux CI 通过。手动执行 [Release 38040091332](https://github.com/nieSugar/GitPeek/actions/runs/38040091332)（两家商店发布关闭）成功；下载该运行的 artifact 后核对 VSIX 为 205,689 字节，SHA-256 与 v0.8.0 正式资产一致，验证了旧版本补发的同包复用。
+- Eclipse 账号已关联，Publisher Agreement 已签署；已创建 `gitpeek` 命名空间并上传 v0.8.0。Open VSX 管理页显示扩展 `Deactivated`、命名空间 `Not verified`，尚无可公开下载的有效版本。
+- 已准备所有权申请，内容为公开仓库、Marketplace、发布 manifest 与版本链接；需向 Open VSX 管理员提交并等待所有权／激活审批。Trusted Publisher 登记还要求 Owner 和 active 版本，当前未满足，不将 OIDC 发布记为成功。
