@@ -65,6 +65,12 @@ async function main() {
 
     const repoA = { root: first, id: 'first' }
     const repoB = { root: second, id: 'second' }
+    assert.equal(await service.userEmail(repoA), 'test@example.invalid', 'repository-local identity overrides the global config')
+    assert.equal(await service.userEmail({ root: nested, id: 'nested' }), 'nested@example.invalid', 'identity is resolved for each repository')
+    git(second, 'config', 'user.email', '')
+    assert.equal(await service.userEmail(repoB), undefined, 'an empty local identity does not fall back to the global email')
+    git(second, 'config', 'user.email', 'test@example.invalid')
+    assert.equal(await service.userEmail({ root: join(root, 'missing'), id: 'missing' }), undefined, 'identity lookup failures remain optional')
     const status = await service.status(repoA)
     assert.equal(status.branch, 'master')
     assert.deepEqual(status.files, [])

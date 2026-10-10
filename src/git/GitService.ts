@@ -36,6 +36,11 @@ export class GitService {
     return parseStatus(await this.run(repo, ['status', '--porcelain=v2', '-z', '--branch']))
   }
 
+  async userEmail(repo: Repository): Promise<string | undefined> {
+    try { return (await this.run(repo, ['config', '--get', 'user.email'])).trim() || undefined }
+    catch { return undefined }
+  }
+
   async blame(repo: Repository, file: string, startLine: number, endLine = startLine): Promise<BlameInfo[]> {
     if (!Number.isInteger(startLine) || !Number.isInteger(endLine) || startLine < 1 || endLine < startLine) throw new RangeError('Invalid blame line range')
     return parseBlame(await this.run(repo, ['-c', 'core.quotePath=false', 'blame', '--line-porcelain', '-L', `${startLine},${endLine}`, '--', file]))

@@ -746,9 +746,9 @@
         },
         "gitpeek.blame.delay": {
           "type": "number",
-          "default": 300,
+          "default": 100,
           "minimum": 0,
-          "description": "解析当前行归属前的延迟，单位为毫秒。"
+          "description": "首次加载文件归属前的延迟，单位为毫秒；已缓存的行立即显示。"
         },
         "gitpeek.history.limit": {
           "type": "number",

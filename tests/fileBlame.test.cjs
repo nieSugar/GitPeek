@@ -13,7 +13,8 @@ async function main() {
   const uri = filename => ({ scheme: 'file', fsPath: filename, toString: () => `file:${filename}` });
   const makeEditor = (repo, file, contents) => {
     const document = { uri: uri(join(repo.root, file)), version: 1, isDirty: true, contents,
-      get lineCount() { return this.lines ?? this.contents.split('\n').length; }, getText() { return this.contents; } };
+      get lineCount() { return this.lines ?? this.contents.split('\n').length; }, getText() { return this.contents; },
+      lineAt(line) { return { range: { start: { line, character: 0 }, end: { line, character: this.contents.split('\n')[line].length } } }; } };
     return { document, rendered: [], setDecorations(_, items) { this.rendered.push(items); } };
   };
   const first = makeEditor(repoA, '目录/改名.ts', '稳定代码\n新修改\n');
@@ -50,10 +51,11 @@ async function main() {
     Disposable: { from: (...items) => ({ dispose: () => items.forEach(item => item.dispose()) }) },
   };
   let head = 'a'.repeat(40), unborn = false, tracked = true;
-  const line = (author = '很长的作者名字', currentLine = 1, hash = 'b'.repeat(40)) => ({ hash, author, currentLine,
+  const line = (author = '很长的作者名字', currentLine = 1, hash = 'b'.repeat(40), authorEmail) => ({ hash, author, authorEmail, currentLine,
     originalLine: currentLine, authorTime: 1700000000, summary: '修复 <引用>', filename: '旧目录/原名.ts' });
   let blame = async () => [line(), line('Not Committed Yet', 2, '0'.repeat(40))];
   const git = {
+    userEmail: async repo => { calls.push({ repo, identity: true }); return repo.id === 'A' ? 'own@example.invalid' : 'other@example.invalid'; },
     run: async (repo, args) => {
       calls.push({ repo, args });
       if (args[0] === 'rev-parse' && args[1] === '--git-path') return join('.git', args[2]);
@@ -101,6 +103,17 @@ async function main() {
     assert.deepEqual(actions.diff, diffArgs, 'rename Diff preserves historical and workspace paths');
     assert.equal(watchers.length, 4);
     assert.ok(watchers.some(watcher => watcher.pattern.baseUri.fsPath === resolve(repoA.root, '.git', 'refs') && watcher.pattern.pattern === '**/*'));
+
+    blame = async () => [line('同名作者', 1, 'b'.repeat(40), 'OWN@EXAMPLE.INVALID'), line('同名作者', 2, 'b'.repeat(40), 'different@example.invalid')];
+    controller.refresh();
+    await until(() => visible(first)[0]?.renderOptions.before.contentText.startsWith('你 ·'));
+    assert.match(visible(first)[1].renderOptions.before.contentText, /^同名作者 ·/, 'the same name with another email is not treated as the current user');
+    const ownHover = handlers.hover(first.document, { line: 0 }).contents.value;
+    assert.match(ownHover, /^\*\*你\*\*/, 'hover uses the same current-user label');
+    assert.match(ownHover, /同名作者 · OWN@EXAMPLE/, 'hover preserves the original author and email');
+    assert.match(ownHover, /command:gitpeek.internal.fileBlameCommit/);
+    assert.match(ownHover, /command:gitpeek.internal.fileBlameDiff/);
+    assert.match(handlers.hover(first.document, { line: 1 }).contents.value, /^\*\*同名作者\*\*/, 'other authors retain their name in hover');
 
     const pending = [];
     blame = () => new Promise(resolve => pending.push(resolve));

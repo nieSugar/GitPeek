@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { GitService } from '../git/GitService';
 import { RepositoryService } from '../git/RepositoryService';
 import type { BlameInfo, Repository } from '../git/types';
-import { escapeMarkdown } from './blame';
+import { blameAuthor, escapeMarkdown } from './blame';
 
 type Actions = {
   showCommit(repo: Repository, hash: string): void | Promise<void>;
@@ -52,7 +52,7 @@ class FileBlameController implements vscode.Disposable {
       vscode.languages.registerHoverProvider({ scheme: 'file' }, {
         provideHover: (document, position) => {
           const hover = document === this.editor?.document ? this.hovers.get(position.line) : undefined;
-          return hover ? new vscode.Hover(hover) : undefined;
+          return hover ? new vscode.Hover(hover, document.lineAt(position.line).range) : undefined;
         },
       }),
     ];
@@ -169,7 +169,7 @@ class FileBlameController implements vscode.Disposable {
       await this.watchRepository(repo, editor);
       if (!current()) return;
       const file = path.relative(repo.root, document.uri.fsPath).replace(/\\/g, '/');
-      const head = await this.head(repo);
+      const [head, userEmail] = await Promise.all([this.head(repo), this.git.userEmail(repo)]);
       if (!current()) return;
       let lines: BlameInfo[] | undefined;
       if (head) {
@@ -185,21 +185,27 @@ class FileBlameController implements vscode.Disposable {
       if (latestHead !== head) { this.schedule(true); return; }
       const annotations: vscode.DecorationOptions[] = [];
       const actualLines = contents ? document.lineCount - (contents.endsWith('\n') ? 1 : 0) : 0;
-      const entries = lines ?? Array.from({ length: actualLines }, (_, line) => ({
+      const entries: BlameInfo[] = lines ?? Array.from({ length: actualLines }, (_, line) => ({
         hash: '', author: '', authorTime: 0, summary: '', originalLine: line + 1, currentLine: line + 1, filename: file,
       }));
       for (const info of entries) {
         const line = info.currentLine - 1;
         if (line < 0 || line >= document.lineCount) continue;
         const uncommitted = !info.hash || /^0+$/.test(info.hash) || info.author === 'Not Committed Yet';
-        const author = Array.from(info.author);
-        const displayAuthor = author.length > 6 ? `${author.slice(0, 5).join('')}…` : info.author;
+        const fullAuthor = blameAuthor(info, userEmail);
+        const author = Array.from(fullAuthor);
+        const displayAuthor = author.length > 6 ? `${author.slice(0, 5).join('')}…` : fullAuthor;
         const label = uncommitted ? '你 · 未提交' : `${displayAuthor} · ${new Date(info.authorTime * 1000).toLocaleDateString('zh-CN')} · ${info.hash.slice(0, 7)}`;
         const hover = new vscode.MarkdownString();
         if (uncommitted) hover.appendText('此行包含未提交的更改。');
         else {
           hover.isTrusted = { enabledCommands: [commitCommand, diffCommand] };
-          hover.appendMarkdown(`**${escapeMarkdown(info.author)}**  \n${new Date(info.authorTime * 1000).toLocaleString('zh-CN')}  \n\n${escapeMarkdown(info.summary)}  \n\n\`${info.hash}\`  \n\n`);
+          hover.appendMarkdown(`**${escapeMarkdown(fullAuthor)}**  \n`);
+          if (info.authorEmail) {
+            const identity = info.author === info.authorEmail ? info.author : `${info.author} · ${info.authorEmail}`;
+            hover.appendMarkdown(`${escapeMarkdown(identity)}  \n`);
+          }
+          hover.appendMarkdown(`${new Date(info.authorTime * 1000).toLocaleString('zh-CN')}  \n\n${escapeMarkdown(info.summary)}  \n\n\`${info.hash}\`  \n\n`);
           const link = (command: string, title: string, args: unknown[]) => `[${title}](command:${command}?${encodeURIComponent(JSON.stringify(args))})`;
           hover.appendMarkdown(`${link(commitCommand, '查看提交', [repo, info.hash])} · ${link(diffCommand, '查看差异', [repo, info.hash, info.filename ?? file, file])}`);
         }

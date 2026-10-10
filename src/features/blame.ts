@@ -13,12 +13,27 @@ const commitCommand = 'gitpeek.internal.blameCommit';
 const diffCommand = 'gitpeek.internal.blameDiff';
 const copyCommand = 'gitpeek.internal.copyBlameHash';
 
+type BlameSnapshot = {
+  document: vscode.TextDocument;
+  version: number;
+  expires: number;
+  repo: Repository;
+  file: string;
+  lines?: Map<number, BlameInfo>;
+  email?: string;
+};
+
 export class BlameController implements vscode.Disposable {
   private readonly decoration = vscode.window.createTextEditorDecorationType({
     after: { margin: '0 0 0 2em', color: new vscode.ThemeColor('descriptionForeground') },
   });
   private readonly subscriptions: vscode.Disposable[] = [];
-  private readonly cache = new Map<string, { expires: number; value: BlameInfo }>();
+  private snapshot?: BlameSnapshot;
+  private loading?: { document: vscode.TextDocument; version: number; revision: number; value: Promise<BlameSnapshot | undefined> };
+  private revision = 0;
+  private watchedRepo?: string;
+  private watcherRequest = 0;
+  private watchers: vscode.FileSystemWatcher[] = [];
   private pending?: ReturnType<typeof setTimeout>;
   private generation = 0;
   private suspended = false;
@@ -37,21 +52,23 @@ export class BlameController implements vscode.Disposable {
         if (event.textEditor === vscode.window.activeTextEditor) this.schedule();
       }),
       vscode.workspace.onDidChangeTextDocument(event => {
-        if (event.document === vscode.window.activeTextEditor?.document) this.schedule();
+        if (event.document === vscode.window.activeTextEditor?.document) this.refresh();
       }),
       vscode.workspace.onDidSaveTextDocument(document => {
-        this.cache.clear();
-        if (document === vscode.window.activeTextEditor?.document) this.schedule(true);
+        if (document === vscode.window.activeTextEditor?.document) this.refresh();
+      }),
+      vscode.workspace.onDidCloseTextDocument(document => {
+        if (document === this.snapshot?.document) this.refresh();
       }),
       vscode.workspace.onDidChangeConfiguration(event => {
         if (event.affectsConfiguration('gitpeek.enabled') || event.affectsConfiguration('gitpeek.blame')) this.refresh();
       }),
       vscode.window.onDidChangeWindowState(event => {
-        if (event.focused) this.schedule();
+        if (event.focused) this.refresh();
       }),
       vscode.languages.registerHoverProvider({ scheme: 'file' }, {
         provideHover: (document, position) => this.shown?.uri === document.uri.toString() && this.shown.line === position.line
-          ? new vscode.Hover(this.shown.hover)
+          ? new vscode.Hover(this.shown.hover, document.lineAt(position.line).range)
           : undefined,
       }),
       vscode.commands.registerCommand(copyCommand, (hash: string) => vscode.env.clipboard.writeText(hash)),
@@ -65,7 +82,9 @@ export class BlameController implements vscode.Disposable {
   }
 
   refresh(): void {
-    this.cache.clear();
+    this.revision++;
+    this.snapshot = undefined;
+    this.loading = undefined;
     this.schedule(true);
   }
 
@@ -77,7 +96,10 @@ export class BlameController implements vscode.Disposable {
   dispose(): void {
     this.disposed = true;
     this.generation++;
+    this.revision++;
+    this.watcherRequest++;
     if (this.pending) clearTimeout(this.pending);
+    for (const watcher of this.watchers) watcher.dispose();
     vscode.Disposable.from(...this.subscriptions).dispose();
   }
 
@@ -100,7 +122,13 @@ export class BlameController implements vscode.Disposable {
       return;
     }
 
-    const delay = immediate ? 0 : Math.max(0, config.get<number>('blame.delay', 300));
+    const snapshot = this.snapshot;
+    if (snapshot?.document === editor.document && snapshot.version === editor.document.version
+      && snapshot.expires > Date.now() && this.watchedRepo === snapshot.repo.id) {
+      this.renderSnapshot(editor, editor.selection.active.line, snapshot);
+      return;
+    }
+    const delay = immediate ? 0 : Math.max(0, config.get<number>('blame.delay', 100));
     const pending = setTimeout(() => {
       if (this.pending === pending) this.pending = undefined;
       void this.update(editor, current);
@@ -126,64 +154,115 @@ export class BlameController implements vscode.Disposable {
         this.render(editor, line, 'GitPeek：大文件已停用当前行归属显示。');
         return;
       }
-      const repo = await this.repositories.forUri(document.uri);
-      if (!repo || !isCurrent()) return;
-      const file = path.relative(repo.root, document.uri.fsPath).replace(/\\/g, '/');
-      let head: string;
-      try {
-        head = (await this.git.run(repo, ['rev-parse', '--verify', 'HEAD'])).trim();
-      } catch {
-        if (isCurrent()) this.render(editor, line, '你 · 未提交的更改');
+      const cached = this.snapshot;
+      if (cached?.document === document && cached.version === version && cached.expires > Date.now()
+        && this.watchedRepo === cached.repo.id) {
+        this.renderSnapshot(editor, line, cached);
         return;
       }
-      if (!isCurrent()) return;
-      const key = `${repo.id}\0${file}\0${head}\0${line}`;
-      const cached = this.cache.get(key);
-      let blame = cached && cached.expires > Date.now() ? cached.value : undefined;
-      if (!blame) {
-        try {
-          blame = (await this.git.blame(repo, file, line + 1))[0];
-        } catch {
-          if (!isCurrent()) return;
-          try {
-            const committed = await this.git.run(repo, ['ls-tree', '-z', '--name-only', 'HEAD', '--', `:(literal)${file}`]);
-            if (!committed && isCurrent()) this.render(editor, line, '你 · 未提交的更改');
-          } catch { /* Automatic blame errors remain silent. */ }
-          return;
-        }
-        if (blame) this.cache.set(key, { expires: Date.now() + 30_000, value: blame });
+      let loading = this.loading;
+      if (!loading || loading.document !== document || loading.version !== version || loading.revision !== this.revision) {
+        loading = { document, version, revision: this.revision, value: this.loadSnapshot(editor, this.revision) };
+        this.loading = loading;
       }
-      const latestHead = (await this.git.run(repo, ['rev-parse', '--verify', 'HEAD'])).trim();
-      if (!isCurrent()) return;
-      if (latestHead !== head) {
-        this.schedule(true);
-        return;
-      }
-      if (!blame || !isCurrent()) return;
-      if (/^0+$/.test(blame.hash) || blame.author === 'Not Committed Yet') {
-        this.render(editor, line, '你 · 未提交的更改');
-        return;
-      }
-      const when = relativeTime(blame.authorTime);
-      const hover = new vscode.MarkdownString();
-      hover.isTrusted = { enabledCommands: this.actions ? [commitCommand, diffCommand, copyCommand] : [copyCommand] };
-      hover.appendMarkdown(`**${escapeMarkdown(blame.author)}**  \n${new Date(blame.authorTime * 1000).toLocaleString('zh-CN')}  \n\n${escapeMarkdown(blame.summary)}  \n\n\`${blame.hash}\`  \n\n`);
-      const link = (command: string, label: string, args: unknown[]) => `[${label}](command:${command}?${encodeURIComponent(JSON.stringify(args))})`;
-      const links = this.actions ? [
-        link(commitCommand, '查看提交', [repo, blame.hash]),
-        link(diffCommand, '查看差异', [repo, blame.hash, blame.filename ?? file]),
-      ] : [];
-      hover.appendMarkdown([...links, link(copyCommand, '复制提交哈希', [blame.hash])].join(' · '));
-      this.render(editor, line, `${blame.author} · ${when} · ${blame.summary}`, hover);
+      let snapshot: BlameSnapshot | undefined;
+      try { snapshot = await loading.value; }
+      finally { if (this.loading === loading) this.loading = undefined; }
+      if (snapshot && isCurrent()) this.renderSnapshot(editor, line, snapshot);
     } catch {
       // Automatic blame stays quiet for non-Git files, missing Git, and timeouts.
     }
   }
 
+  private async watchRepository(repo: Repository): Promise<boolean> {
+    if (this.watchedRepo === repo.id) return true;
+    const request = ++this.watcherRequest;
+    this.watchedRepo = undefined;
+    this.snapshot = undefined;
+    for (const watcher of this.watchers) watcher.dispose();
+    this.watchers = [];
+    try {
+      const entries = ['HEAD', 'index', 'packed-refs', 'refs', 'logs/HEAD', 'config'];
+      const paths = (await this.git.run(repo, ['rev-parse', ...entries.flatMap(entry => ['--git-path', entry])])).trim().split(/\r?\n/);
+      if (request !== this.watcherRequest || this.disposed || paths.length !== entries.length) return false;
+      for (const entry of paths) {
+        const filename = path.resolve(repo.root, entry);
+        const refs = path.basename(filename) === 'refs';
+        const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(
+          vscode.Uri.file(refs ? filename : path.dirname(filename)), refs ? '**/*' : path.basename(filename),
+        ));
+        watcher.onDidChange(() => this.refresh());
+        watcher.onDidCreate(() => this.refresh());
+        watcher.onDidDelete(() => this.refresh());
+        this.watchers.push(watcher);
+      }
+      this.watchedRepo = repo.id;
+      return true;
+    } catch { return false; }
+  }
+
+  private async loadSnapshot(editor: vscode.TextEditor, revision: number): Promise<BlameSnapshot | undefined> {
+    const document = editor.document;
+    const version = document.version;
+    const current = () => !this.disposed && revision === this.revision && document.version === version
+      && !document.isDirty && vscode.window.activeTextEditor === editor;
+    const repo = await this.repositories.forUri(document.uri);
+    if (!repo || !current()) return undefined;
+    const watched = await this.watchRepository(repo);
+    if (!current()) return undefined;
+    const file = path.relative(repo.root, document.uri.fsPath).replace(/\\/g, '/');
+    const head = () => this.git.run(repo, ['rev-parse', '--verify', 'HEAD']).then(value => value.trim(), () => undefined);
+    const [before, email] = await Promise.all([head(), this.git.userEmail(repo)]);
+    if (!current()) return undefined;
+    let lines: Map<number, BlameInfo> | undefined;
+    if (before) {
+      const contents = document.getText();
+      const count = contents ? document.lineCount - Number(contents.endsWith('\n')) : 0;
+      try {
+        lines = new Map((count ? await this.git.blame(repo, file, 1, count) : []).map(info => [info.currentLine - 1, info]));
+      } catch (error) {
+        if (!current()) return undefined;
+        const tracked = await this.git.run(repo, ['ls-tree', '-z', '--name-only', before, '--', `:(literal)${file}`]);
+        if (tracked) throw error;
+      }
+    }
+    const after = await head();
+    if (!current()) return undefined;
+    if (before !== after) { this.refresh(); return undefined; }
+    const snapshot = { document, version, expires: Date.now() + 30_000, repo, file, lines, email };
+    if (watched) this.snapshot = snapshot;
+    return snapshot;
+  }
+
+  private renderSnapshot(editor: vscode.TextEditor, line: number, snapshot: BlameSnapshot): void {
+    const blame = snapshot.lines?.get(line);
+    if (!snapshot.lines || blame && (/^0+$/.test(blame.hash) || blame.author === 'Not Committed Yet')) {
+      this.render(editor, line, '你 · 未提交的更改');
+      return;
+    }
+    if (!blame) return;
+    const { repo, file, email } = snapshot;
+    const author = blameAuthor(blame, email);
+    const hover = new vscode.MarkdownString();
+    hover.isTrusted = { enabledCommands: this.actions ? [commitCommand, diffCommand, copyCommand] : [copyCommand] };
+    hover.appendMarkdown(`**${escapeMarkdown(author)}**  \n`);
+    if (blame.authorEmail) {
+      const identity = blame.author === blame.authorEmail ? blame.author : `${blame.author} · ${blame.authorEmail}`;
+      hover.appendMarkdown(`${escapeMarkdown(identity)}  \n`);
+    }
+    hover.appendMarkdown(`${new Date(blame.authorTime * 1000).toLocaleString('zh-CN')}  \n\n${escapeMarkdown(blame.summary)}  \n\n\`${blame.hash}\`  \n\n`);
+    const link = (command: string, label: string, args: unknown[]) => `[${label}](command:${command}?${encodeURIComponent(JSON.stringify(args))})`;
+    const links = this.actions ? [
+      link(commitCommand, '查看提交', [repo, blame.hash]),
+      link(diffCommand, '查看差异', [repo, blame.hash, blame.filename ?? file]),
+    ] : [];
+    hover.appendMarkdown([...links, link(copyCommand, '复制提交哈希', [blame.hash])].join(' · '));
+    this.render(editor, line, `${author} · ${relativeTime(blame.authorTime)} · ${blame.summary}`, hover);
+  }
+
   private render(editor: vscode.TextEditor, line: number, text: string, hover?: vscode.MarkdownString): void {
-    const end = editor.document.lineAt(line).range.end;
     editor.setDecorations(this.decoration, [{
-      range: new vscode.Range(end, end),
+      range: editor.document.lineAt(line).range,
       renderOptions: { after: { contentText: text } },
       hoverMessage: hover,
     }]);
@@ -201,4 +280,9 @@ function relativeTime(seconds: number): string {
 
 export function escapeMarkdown(value: string): string {
   return value.replace(/[\\`*_{}\[\]()#+.!|>~-]/g, '\\$&');
+}
+
+export function blameAuthor(info: BlameInfo, email?: string): string {
+  return info.authorEmail?.trim() && email?.trim()
+    && info.authorEmail.trim().toLowerCase() === email.trim().toLowerCase() ? '你' : info.author;
 }
