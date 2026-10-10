@@ -127,4 +127,5 @@ npm run benchmark:large -- 20000 5 "D:\Microsoft VS Code\Code.exe"
 - 本地 6 项发布流程检查通过，覆盖任务与权限隔离、同一包传递、旧包复用、补发 Latest 行为和下载失败。已通过真实 CLI 帮助核对参数。
 - 工作流提交 `9c95e39` 已推送到 main 与工作分支，Windows／Linux CI 通过。手动执行 [Release 38040091332](https://github.com/nieSugar/GitPeek/actions/runs/38040091332)（两家商店发布关闭）成功；下载该运行的 artifact 后核对 VSIX 为 205,689 字节，SHA-256 与 v0.8.0 正式资产一致，验证了旧版本补发的同包复用。
 - Eclipse 账号已关联，Publisher Agreement 已签署；已创建 `gitpeek` 命名空间并上传 v0.8.0。初始审核时显示 `Deactivated`，随后转为 `Public`；[公开扩展页面](https://open-vsx.org/extension/gitpeek/gitpeek) 和 API 已确认版本 0.8.0 可下载。下载 Open VSX 安装包后，SHA-256 与 GitHub 正式包一致。
-- 命名空间仍为 `Not verified`。已准备所有权申请，内容为公开仓库、Marketplace、发布 manifest 与版本链接，等待用户授权发送给 Open VSX 管理员。Trusted Publisher 登记要求 Owner 和 active 版本；当前已有 active 版本，但所有权尚未完成，不将 OIDC 自动发布记为成功。Cursor 侧收录和实机兼容性尚未验证。
+- 用户授权后已提交 [命名空间所有权申请 #14009](https://github.com/EclipseFdn/open-vsx.org/issues/14009)，作者为 `nieSugar`，内容仅包含公开仓库、Marketplace、发布 manifest 与版本证明。当前申请为 Open，命名空间仍未完成所有权核验。
+- Trusted Publisher 登记要求 Owner 和 active 版本；当前已有 active 版本，须等待管理员批准所有权，再登记 `nieSugar/GitPeek` 的 `release.yml` 并执行 OIDC 发布验收。不将已提交申请或构建通过视为 OIDC 自动发布成功。Cursor 侧收录和实机兼容性尚未验证。
