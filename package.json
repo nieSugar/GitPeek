@@ -2,7 +2,7 @@
   "name": "gitpeek",
   "displayName": "GitPeek",
   "description": "面向代码上下文的轻量级 VS Code Git 扩展。",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "publisher": "gitpeek",
   "license": "MIT",
   "repository": {
@@ -339,9 +339,24 @@
           "title": "GitPeek",
           "icon": "resources/gitpeek.svg"
         }
+      ],
+      "panel": [
+        {
+          "id": "gitpeek-commit-graph",
+          "title": "GitPeek 提交图",
+          "icon": "resources/gitpeek.svg"
+        }
       ]
     },
     "views": {
+      "gitpeek-commit-graph": [
+        {
+          "id": "gitpeek.commitGraph",
+          "name": "GitPeek 提交图",
+          "type": "webview",
+          "when": "config.gitpeek.enabled"
+        }
+      ],
       "gitpeek": [
         {
           "id": "gitpeek.repository",

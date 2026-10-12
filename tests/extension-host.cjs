@@ -72,16 +72,22 @@ module.exports.run = async function run(options = {}) {
     }
   }
   if (workspaceRoots.length === 1 && vscode.TabInputWebview) {
+    const graphContainer = 'gitpeek-commit-graph';
+    const contributes = extension.packageJSON.contributes;
+    if (!contributes.viewsContainers.panel?.some((container) => container.id === graphContainer)
+      || !contributes.views[graphContainer]?.some((view) => view.id === 'gitpeek.commitGraph' && view.type === 'webview')) {
+      throw new Error('GitPeek Commit Graph is not contributed as a bottom panel Webview view.');
+    }
+    if (!commands.has('gitpeek.commitGraph.focus')) throw new Error('GitPeek Commit Graph panel focus command is missing.');
+    const containerCommand = `workbench.view.extension.${graphContainer}`;
+    if (!commands.has(containerCommand)) throw new Error('GitPeek Commit Graph panel container command is missing.');
+    await vscode.commands.executeCommand(containerCommand);
     await vscode.commands.executeCommand('gitpeek.showCommitGraph');
-    const graphOpen = () => {
-      const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
-      return input instanceof vscode.TabInputWebview && ['gitpeek.commitGraph', 'mainThreadWebview-gitpeek.commitGraph'].includes(input.viewType);
-    };
-    const deadline = Date.now() + 5000;
-    while (!graphOpen() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
-    const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
-    if (!(input instanceof vscode.TabInputWebview) || !['gitpeek.commitGraph', 'mainThreadWebview-gitpeek.commitGraph'].includes(input.viewType)) {
-      throw new Error('GitPeek Commit Graph did not open in an editor tab.');
+    await vscode.commands.executeCommand('gitpeek.commitGraph.focus');
+    const graphTab = vscode.window.tabGroups.all.flatMap((group) => group.tabs).find(({ input }) =>
+      input instanceof vscode.TabInputWebview && ['gitpeek.commitGraph', 'mainThreadWebview-gitpeek.commitGraph'].includes(input.viewType));
+    if (graphTab) {
+      throw new Error('GitPeek Commit Graph opened in an editor tab instead of its panel view.');
     }
   }
 

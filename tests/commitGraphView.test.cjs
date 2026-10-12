@@ -208,16 +208,25 @@ async function main() {
     assert.equal(elements.more.hidden, true, 'failed queries do not keep the previous load-more action');
     renderSearch({ kind: 'message', text: '', scope: 'all' }, [root]);
     assert.equal(elements.rows.children.length, 1, 'a corrected query recovers after errors');
-    const commands = new Map(), posted = [], requests = [], diffs = [], details = [];
+    const commands = new Map(), posted = [], requests = [], diffs = [], details = [], focused = [], shown = [];
     const disposable = { dispose() {} };
-    let panelReceive, disposePanel, viewChanged, configurationChanged, selectedRepo = { id: 'first', root: '/repo/first' }, enabled = true;
-    const panel = { visible: true, reveal() {}, onDidDispose(callback) { disposePanel = callback; return disposable; }, onDidChangeViewState(callback) { viewChanged = callback; return disposable; },
+    let provider, panelReceive, disposePanel, viewChanged, configurationChanged, selectedRepo = { id: 'first', root: '/repo/first' }, enabled = true;
+    const panel = { visible: true, show(preserveFocus) { shown.push(preserveFocus); this.visible = true; }, onDidDispose(callback) { disposePanel = callback; return disposable; }, onDidChangeVisibility(callback) { viewChanged = callback; return disposable; },
       webview: { postMessage: async message => posted.push(message), onDidReceiveMessage(callback) { panelReceive = callback; return disposable; } } };
     Object.assign(vscode, {
       ViewColumn: { Active: 1 }, env: { clipboard: {} },
-      commands: { registerCommand(name, callback) { commands.set(name, callback); return disposable; } },
+      commands: {
+        registerCommand(name, callback) { commands.set(name, callback); return disposable; },
+        async executeCommand(name) { focused.push(name); assert.equal(name, 'gitpeek.commitGraph.focus'); await provider.resolveWebviewView(panel); },
+      },
       workspace: { getConfiguration: () => ({ get: (_name, fallback) => enabled ? fallback : false }), onDidChangeConfiguration(callback) { configurationChanged = callback; return disposable; } },
-      window: { createWebviewPanel: () => panel, showInformationMessage: async () => {}, showErrorMessage: async message => { throw new Error(message); } },
+      window: {
+        registerWebviewViewProvider(id, value, options) {
+          assert.equal(id, 'gitpeek.commitGraph'); assert.deepEqual(options, { webviewOptions: { retainContextWhenHidden: true } });
+          provider = value; return disposable;
+        },
+        showInformationMessage: async () => {}, showErrorMessage: async message => { throw new Error(message); },
+      },
     });
     const service = { run: async (_repo, args, options = {}) => {
       if (args[0] === 'branch') return 'main\n';
@@ -235,11 +244,16 @@ async function main() {
         if (requests.length > 1) options.signal.addEventListener('abort', () => reject(Object.assign(new Error('cancelled'), { name: 'AbortError' })), { once: true });
       });
     } };
-    const graph = registerCommitGraph({ subscriptions: [] }, service, { pickRepository: async () => selectedRepo },
+    const registerGraph = () => registerCommitGraph({ subscriptions: [] }, service, { pickRepository: async () => selectedRepo },
       async (...args) => details.push(args), undefined, async (...args) => diffs.push(args));
+    const graph = registerGraph();
     const until = async condition => { for (let count = 0; count < 30 && !condition(); count++) await new Promise(resolve => setImmediate(resolve)); assert.ok(condition(), 'async graph operation completed'); };
     const record = (hash, subject = 'Needle') => `* ${hash}\x1f\x1fTest\x1ftest@example.invalid\x1f0\x1f${subject}\x1f\x1e`;
+    assert.ok(provider, 'the bottom view provider is registered before a command opens it');
     await commands.get('gitpeek.showCommitGraph')();
+    assert.deepEqual(focused, ['gitpeek.commitGraph.focus'], 'the first command focuses the contributed bottom view');
+    assert.deepEqual(panel.webview.options, { enableScripts: true });
+    assert.match(panel.webview.html, /<h1>提交图<\/h1>/);
     panelReceive({ type: 'ready' }); await until(() => requests.length === 1);
     panelReceive({ type: 'search', kind: 'code', text: 'Needle', scope: 'all' }); await until(() => requests.length === 2);
     assert.equal(requests[0].signal.aborted, true, 'changing conditions stops the previous Git query');
@@ -261,6 +275,8 @@ async function main() {
     const firstRefresh = graph.refresh(); await until(() => requests.length === 3);
     selectedRepo = { id: 'second', root: '/repo/second' };
     const switched = commands.get('gitpeek.showCommitGraph')(); await until(() => requests.length === 4);
+    assert.deepEqual(shown, [false], 'subsequent commands show and focus the resolved view');
+    assert.equal(focused.length, 1, 'a resolved view is reused without another focus command');
     assert.equal(requests[2].signal.aborted, true, 'changing repositories stops the previous Git query');
     requests[3].resolve(Array.from({ length: 101 }, (_, index) => record(index.toString(16).padStart(40, '0'))).join('\n'));
     await Promise.all([firstRefresh, switched]);
@@ -272,6 +288,8 @@ async function main() {
     const hidden = graph.refresh(); await until(() => requests.length === 6);
     panel.visible = false; viewChanged(); await hidden;
     assert.equal(requests[5].signal.aborted, true, 'hiding the graph stops inactive subprocesses');
+    await graph.refresh();
+    assert.equal(requests.length, 6, 'external refresh does not start queries while the bottom tab is hidden');
     panel.visible = true; viewChanged(); await until(() => requests.length === 7);
     enabled = false; configurationChanged({ affectsConfiguration: () => true });
     assert.equal(requests[6].signal.aborted, true, 'disabling the extension stops the query');
@@ -280,6 +298,20 @@ async function main() {
     const beforeClose = posted.length; disposePanel(); await closing;
     assert.equal(requests[7].signal.aborted, true, 'closing the view terminates the query');
     assert.equal(posted.length, beforeClose, 'closed views receive neither stale render nor cancellation error');
+    selectedRepo = { id: 'direct', root: '/repo/direct' };
+    registerGraph();
+    await provider.resolveWebviewView(panel);
+    panelReceive({ type: 'ready' }); await until(() => requests.length === 9);
+    requests[8].resolve(record(root.hash)); await until(() => posted.findLast(message => message.type === 'render').repoId === 'direct');
+    assert.equal(focused.length, 1, 'opening the bottom tab directly initializes its repository without running the command');
+    disposePanel(); selectedRepo = undefined;
+    registerGraph();
+    await provider.resolveWebviewView(panel);
+    const beforeEmptyReady = posted.length;
+    panelReceive({ type: 'ready' }); await until(() => posted.length > beforeEmptyReady);
+    assert.match(posted.at(-1).message, /仓库/, 'a tab opened without a repository receives an actionable empty state');
+    assert.equal(requests.length, 9, 'the empty state does not start Git queries');
+    disposePanel();
     console.log('Commit graph Webview passed (CSP, SVG lanes, search, native hit Diff, pagination and query lifecycle cancellation).');
   } finally {
     Module._load = originalLoad;

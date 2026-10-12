@@ -20,7 +20,7 @@ export function registerCommitGraph(
   openRebase?: (repo: Repository, firstHash?: string) => Promise<void>,
   showDiff?: ReturnType<typeof registerCommitFeatures>['showDiff'],
 ): { refresh(): Promise<void> } {
-  let panel: vscode.WebviewPanel | undefined;
+  let panel: vscode.WebviewView | undefined;
   let repo: Repository | undefined;
   let snapshot: GraphSnapshot | undefined;
   let ready = false;
@@ -33,7 +33,7 @@ export function registerCommitGraph(
   const avatarCache = new Map<string, { expires: number; avatars: Record<string, string> }>();
 
   const refresh = async (): Promise<void> => {
-    if (!panel || !repo || !ready || !vscode.workspace.getConfiguration('gitpeek').get<boolean>('enabled', true)) return;
+    if (!panel?.visible || !repo || !ready || !vscode.workspace.getConfiguration('gitpeek').get<boolean>('enabled', true)) return;
     cancel();
     const controller = pending = new AbortController();
     const current = ++generation;
@@ -56,14 +56,18 @@ export function registerCommitGraph(
     }
   };
 
+  const pickRepository = async (): Promise<Repository | undefined> => {
+    const uri = vscode.window.activeTextEditor?.document.uri;
+    return (uri?.scheme === 'file' ? await repositories.forUri(uri) : undefined)
+      ?? await repositories.pickRepository();
+  };
+
   const show = async (): Promise<void> => {
     if (!vscode.workspace.getConfiguration('gitpeek').get<boolean>('enabled', true)) {
       await vscode.window.showInformationMessage('GitPeek 已在设置中禁用。');
       return;
     }
-    const uri = vscode.window.activeTextEditor?.document.uri;
-    const selected = (uri?.scheme === 'file' ? await repositories.forUri(uri) : undefined)
-      ?? await repositories.pickRepository();
+    const selected = await pickRepository();
     if (!selected) {
       await vscode.window.showInformationMessage('GitPeek：请打开 Git 仓库中的文件，或选择一个仓库。');
       return;
@@ -72,23 +76,23 @@ export function registerCommitGraph(
     repo = selected;
     if (panel) {
       panel.title = `GitPeek 提交图 · ${basename(selected.root)}`;
-      panel.reveal();
+      panel.show(false);
       await refresh();
       return;
     }
-    panel = vscode.window.createWebviewPanel('gitpeek.commitGraph', `GitPeek 提交图 · ${basename(selected.root)}`, vscode.ViewColumn.Active, {
-      enableScripts: true, retainContextWhenHidden: true,
-    });
-    panel.onDidDispose(() => { cancel(); panel = undefined; ready = false; generation++; });
-    panel.onDidChangeViewState(() => { if (panel?.visible) void refresh(); else { cancel(); generation++; } });
-    panel.webview.onDidReceiveMessage((message: unknown) => { void handleMessage(message); });
-    panel.webview.html = graphHtml();
+    await vscode.commands.executeCommand('gitpeek.commitGraph.focus');
   };
 
   const handleMessage = async (message: unknown, requestedAction?: string): Promise<void> => {
-    if (!panel || !repo || !message || typeof message !== 'object') return;
+    if (!panel || !message || typeof message !== 'object') return;
     const action = (message as { type?: unknown }).type;
-    if (action === 'ready') { ready = true; await refresh(); return; }
+    if (action === 'ready') {
+      ready = true;
+      if (repo) await refresh();
+      else void panel.webview.postMessage({ type: 'error', message: '请打开 Git 仓库，然后运行“GitPeek: 提交图”选择仓库。' });
+      return;
+    }
+    if (!repo) return;
     if (action === 'refresh') { await refresh(); return; }
     if (action === 'loadMore') { if (snapshot?.hasMore) { limit += 100; await refresh(); } return; }
     if (!vscode.workspace.getConfiguration('gitpeek').get<boolean>('enabled', true)) return;
@@ -280,6 +284,21 @@ export function registerCommitGraph(
     return avatars;
   };
 
+  context.subscriptions.push(vscode.window.registerWebviewViewProvider('gitpeek.commitGraph', {
+    async resolveWebviewView(view) {
+      panel = view;
+      ready = false;
+      view.webview.options = { enableScripts: true };
+      view.onDidDispose(() => { cancel(); panel = undefined; ready = false; generation++; });
+      view.onDidChangeVisibility(() => { if (view.visible) void refresh(); else { cancel(); generation++; } });
+      view.webview.onDidReceiveMessage((message: unknown) => { void handleMessage(message); });
+      const selected = repo ?? await pickRepository();
+      if (panel !== view) return;
+      repo ??= selected;
+      view.title = repo ? `GitPeek 提交图 · ${basename(repo.root)}` : 'GitPeek 提交图';
+      view.webview.html = graphHtml();
+    },
+  }, { webviewOptions: { retainContextWhenHidden: true } }));
   context.subscriptions.push(vscode.commands.registerCommand('gitpeek.showCommitGraph', show));
   context.subscriptions.push({ dispose: cancel }, vscode.workspace.onDidChangeConfiguration(event => {
     if (event.affectsConfiguration('gitpeek.enabled') && !vscode.workspace.getConfiguration('gitpeek').get('enabled', true)) {

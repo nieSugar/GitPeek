@@ -32,11 +32,11 @@ async function main() {
     const hash = git(repoA.root, 'rev-parse', 'HEAD');
     const commands = new Map(), messages = [], copied = [], opened = [], shown = [], rebaseRequests = [], warnings = [], info = [], errors = [];
     const disposable = { dispose() {} };
-    let receive, selectedRepo = repoA, enabled = true, warningAnswer, pickAnswer;
+    let graphProvider, receive, selectedRepo = repoA, enabled = true, warningAnswer, pickAnswer;
     let picks = 0;
     const uri = fields => ({ ...fields, toString() { return JSON.stringify(fields); } });
     const panel = {
-      reveal() {}, onDidDispose: () => disposable, onDidChangeViewState: () => disposable,
+      visible: true, show() {}, onDidDispose: () => disposable, onDidChangeVisibility: () => disposable,
       webview: { postMessage: async message => messages.push(message), onDidReceiveMessage: handler => { receive = handler; return disposable; } },
     };
     const vscode = {
@@ -51,6 +51,10 @@ async function main() {
         activeTextEditor: undefined,
         tabGroups: { activeTabGroup: {} },
         onDidChangeActiveTextEditor: () => disposable, onDidChangeWindowState: () => disposable,
+        registerWebviewViewProvider: (id, provider, options) => {
+          assert.equal(id, 'gitpeek.commitGraph'); assert.deepEqual(options, { webviewOptions: { retainContextWhenHidden: true } });
+          graphProvider = provider; return disposable;
+        },
         createWebviewPanel: () => panel, createTreeView: () => ({ ...disposable, reveal: async () => {}, onDidChangeSelection: () => disposable }),
         createStatusBarItem: () => ({ ...disposable, hide() {}, show() {} }),
         showQuickPick: async items => { picks++; return typeof pickAnswer === 'function' ? pickAnswer(items) : pickAnswer; },
@@ -72,7 +76,8 @@ async function main() {
       },
       commands: {
         registerCommand: (name, callback) => { assert.ok(!commands.has(name), name); commands.set(name, callback); return disposable; },
-        executeCommand: async (name, ...args) => commands.has(name) ? commands.get(name)(...args) : opened.push([name, ...args]),
+        executeCommand: async (name, ...args) => name === 'gitpeek.commitGraph.focus' ? graphProvider.resolveWebviewView(panel)
+          : commands.has(name) ? commands.get(name)(...args) : opened.push([name, ...args]),
       },
     };
     const names = ['commitGraph', 'history', 'sidebar', 'branchCompare', 'reviewChanges', 'commitDetail', 'revisionCompare', 'selectionHistory'];
@@ -252,6 +257,9 @@ async function main() {
     assert.equal(opened.length, openedCount, 'non-action rows do not dispatch operations');
 
     const { contributes } = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+    for (const container of Object.values(contributes.viewsContainers).flat()) assert.match(container.id, /^[a-zA-Z0-9_-]+$/, 'view container IDs must satisfy the VS Code renderer constraint');
+    assert.ok(contributes.viewsContainers.panel.some(item => item.id === 'gitpeek-commit-graph'), 'the graph container defaults to the bottom panel');
+    assert.equal(contributes.views['gitpeek-commit-graph'].find(item => item.id === 'gitpeek.commitGraph').type, 'webview');
     const menuCommands = contributes.commands.filter(item => item.command.startsWith('gitpeek.internal.'));
     for (const { command } of menuCommands) {
       assert.ok(commands.has(command), `menu command is registered: ${command}`);
